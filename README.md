@@ -12,8 +12,20 @@ This project is not affiliated with or endorsed by Electronic Arts. *Need for Sp
 trademarks of Electronic Arts Inc.
 
 **Status: early, but playable.** Career, races, the garage and the menus work at 60 fps with sound.
-A Setup app (choose your game folder, get the app in Applications) is in progress; until then the
-build is done in Terminal, below.
+
+## Play it on your Mac
+
+1. Have your own installed copy of the PC game (version 1.4, see below) on your Mac.
+2. Download the **Setup app** (`NFS-Carbon-Setup` disk image) from the
+   [latest release](https://github.com/vasist15-source/nfs-carbon-mac/releases/latest), open it, and
+   choose or drop your game folder. The app is not notarized: the first time, open it, click Done, then
+   System Settings → Privacy & Security → **Open Anyway**.
+3. Click **Build**. The first build takes a while (a one-time analysis of NFSC.exe); then the game is in
+   your Applications folder.
+
+The Setup app holds no game files: it builds the game on your Mac from your copy. You can also build in
+Terminal with `./setup.sh "/path/to/Need for Speed - Carbon"` (add `--button-icons` for the controller
+icons).
 
 ## What works
 
@@ -42,7 +54,7 @@ the rear-view mirror is not widescreen yet; the online menus are still shown (sa
   (SHA-256 `baaaaec33873d4ba7e4dbae6a5212049ffdcf9679a35d865d7625b4189952fd3`; the build checks it)
   and the `msvcr71.dll` / `msvcp71.dll` from the game folder.
 
-## Build it in Terminal
+## Build it by hand (for development)
 
 ```
 GAME="/path/to/Need for Speed - Carbon"         # your game folder, the one with NFSC.exe

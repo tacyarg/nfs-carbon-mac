@@ -14,7 +14,9 @@ build time; the fallback icon in tools/setup_kit/defaults is original artwork.
 The native host, compatibility runtime and translator are recomp-kit by
 veritr1x, included in kit/ with this port's changes, under its own LICENSE and
 NOTICE. The port's setup and much of its approach follow the Need for Speed:
-Most Wanted Mac port (github.com/elforeign/nfs-most-wanted-mac).
+Most Wanted Mac port (github.com/elforeign/nfs-most-wanted-mac). Its Setup app
+(tools/installer/SetupApp.swift), setup.sh and setup kit were adapted for
+this port.
 
 Third-party work this port reimplements:
 
