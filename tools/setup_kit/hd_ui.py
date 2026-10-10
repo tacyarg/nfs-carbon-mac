@@ -333,7 +333,8 @@ class Installer:
         keys = sorted(set(self.raw) | {k for k, f in self.files.items() if getattr(f, "dirty", False)})
         # HD_UI_SKIP="GLOBAL/GLOBALB.LZC,..." leaves those files as shipped (for narrowing a problem down).
         skip = {x.strip().upper() for x in os.environ.get("HD_UI_SKIP", "").split(",") if x.strip()}
-        for key in [k for k in keys if k in skip]:
+        import fnmatch
+        for key in [k for k in keys if any(fnmatch.fnmatch(k, pat) for pat in skip)]:
             keys.remove(key)
             self.log(f"  left as shipped (HD_UI_SKIP): {key}")
         if self.unlock:
