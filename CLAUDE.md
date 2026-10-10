@@ -242,6 +242,13 @@ Explain findings plainly and keep commands copy-pasteable.
   built, NOT yet run): input arriving outside a slice while older input waits is appended and the
   queue drained in order; apply_focus posts the CURRENT g_focused. lldb attach to the app works
   (ad hoc signed): `lldb -p PID --batch -o "p/x *(unsigned long*)&g_mem"` then guest addr + base.
+- Second black-screen kind (2026-10-10 21:0x, focus flags fine, F10 page draws over it, no music):
+  FE stack = FeBlackScreen.fng + FEAnyMovie.fng, queued movie (0xa97a88) = "EA_Bumper"; no video
+  decode thread, so the movie never started. Root cause NOT found. Mitigation (built, not yet run):
+  mods/core/nfsc/intro.h sets the game's skip-movies dword 0x00a9e6d8 (the Extra Options switch;
+  read at 005baec2 for FE movie objects, type 7 -> message 0xc3960eb9) only while the queued movie
+  is EA_Bumper(_WS)/PSA_Nikki/EAHD_Bumper; setting skip_intro (default on). FE engine =
+  **0x00a97a78; its package list at +0xe0 (next +4), package name pointer at +0xc.
 - First-launch black screen: tools/dev/first_launch_capture.sh (fresh profile + cold Metal cache +
   `sample`) did NOT reproduce it in 3 launches on 2026-10-10; left as a rare known issue.
 
