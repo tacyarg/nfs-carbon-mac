@@ -10,6 +10,7 @@
 #include "../platform/os.h"
 #include "memory.h"
 
+#include <algorithm>
 #include <array>
 #include <deque>
 #include <map>
@@ -1694,6 +1695,32 @@ uint32_t map_virtual_key(uint32_t code, uint32_t type) {
 void u_MapVirtualKeyA(X86 *c) {
     set_eax(c, map_virtual_key(arg(c, 0), arg(c, 1)));
 }
+// ToUnicode(vk, scan, keystate, out, cch, flags): the character a key types, as games use to name
+// a bound key (NFS Carbon's Controls screen names letter keys only this way; without it they were
+// blank). The US layout MAPVK_VK_TO_CHAR knows; letters are lower case unless Shift (0x10) or
+// Caps Lock (0x14, toggled) is set in the key state, as on Windows. Returns 1, or 0 for a key
+// that types nothing (the caller then uses its own name for it).
+void u_ToUnicode(X86 *c) {
+    const uint32_t vk = arg(c, 0), state = arg(c, 2), out = arg(c, 3), cch = arg(c, 4);
+    uint32_t ch = map_virtual_key(vk, 2);
+    if (!ch || !out || (int32_t)cch < 1 || !gm_valid(out, 2 * std::min<uint32_t>(cch, 2))) {
+        set_eax(c, 0);
+        return;
+    }
+    if (ch >= 'A' && ch <= 'Z') {
+        bool shift = false, caps = false;
+        if (state && gm_valid(state, 256)) {
+            shift = (gm_ptr(state)[0x10] & 0x80) != 0;
+            caps = (gm_ptr(state)[0x14] & 0x01) != 0;
+        }
+        if (shift == caps)
+            ch += 'a' - 'A';
+    }
+    wr16(out, uint16_t(ch));
+    if (cch > 1)
+        wr16(out + 2, 0);
+    set_eax(c, 1);
+}
 
 const ImportShim g_user32_shims[] = {
     {"USER32.dll", "RegisterClassA", 1, u_RegisterClassA},
@@ -1769,7 +1796,7 @@ const ImportShim g_user32_shims[] = {
     {"USER32.dll", "GetDesktopWindow", 0, nullptr},
     {"USER32.dll", "MapVirtualKeyA", 2, u_MapVirtualKeyA},
     {"USER32.dll", "MapVirtualKeyExA", 3, u_MapVirtualKeyA},
-    {"USER32.dll", "ToUnicode", 6, nullptr},
+    {"USER32.dll", "ToUnicode", 6, u_ToUnicode},
     {"USER32.dll", "SendInput", 3, nullptr},
     {"USER32.dll", "PostThreadMessageA", 4, nullptr},
     {"USER32.dll", "GetForegroundWindow", 0, u_GetForegroundWindow},
