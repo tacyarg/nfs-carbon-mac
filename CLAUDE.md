@@ -114,6 +114,12 @@ explain findings plainly, keep commands copy-pasteable.
   vtable 009f82d0, maybe Online/LAN). Item labels are not bStringHash'd names found in the
   exe (tried MM_*/MAINMENU_*); likely defined in the FE package data. Next: find the
   carousel item list (who fills FeMainMenu_Sub's options) or hook the choice handler.
+- Full resolution list + Display mode (git 579ed7d, built + installed, NOT yet run): list =
+  screen/1..4 ("(native)" on k=1) + common 4:3/16:10/16:9/21:9 sizes <= screen, sorted by
+  width; g_aspect follows the chosen size (FOV/HUD); needs kit change 16. Window mode =
+  the kit's F10 settings page (game.toml [settings] rows = MW's list). Unknown: whether
+  gameplay frames keep aspect for non-screen shapes (compositor's non-legacy gameplay
+  path draws the world to the whole drawable -> could stretch).
 - Resolution menu (CONFIRMED working 2026-10-10 by the user): list = full-screen size / 1..4
   (>=480 rows), default nearest 1080 rows; option index 00a65388; tables at 0xc2b500
   (supported) / 0xc2b5a0 (refresh) via 8 redirects (indexed operands need kit change 15);
