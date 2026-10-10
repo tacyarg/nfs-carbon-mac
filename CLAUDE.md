@@ -114,7 +114,8 @@ explain findings plainly, keep commands copy-pasteable.
   vtable 009f82d0, maybe Online/LAN). Item labels are not bStringHash'd names found in the
   exe (tried MM_*/MAINMENU_*); likely defined in the FE package data. Next: find the
   carousel item list (who fills FeMainMenu_Sub's options) or hook the choice handler.
-- Full resolution list + Display mode (git 579ed7d, built + installed, NOT yet run): list =
+- Full resolution list + Display mode (git 579ed7d, CONFIRMED by the user 2026-10-10: 1920x1080
+  letterboxed correctly, no stretch; F10 (fn+F10) Window row switches modes): list =
   screen/1..4 ("(native)" on k=1) + common 4:3/16:10/16:9/21:9 sizes <= screen, sorted by
   width; g_aspect follows the chosen size (FOV/HUD); needs kit change 16. Window mode =
   the kit's F10 settings page (game.toml [settings] rows = MW's list). Unknown: whether
