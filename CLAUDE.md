@@ -74,8 +74,11 @@ Explain findings plainly and keep commands copy-pasteable.
   slot 0xc2b414 = 240*aspect-320 for SetWideScreenMode's 120.0 (2 redirects); widescreen
   HUD forced on (SETZ 005dc507/005d52b2, JNZ 005b6bae/005b6b5b); BEFORE/AFTER hooks on
   SetWideScreenMode 005d5280 move groups 0x1603009E/0x5D0101F1 via FindObject 005a0250 /
-  GetCenter 00597900 / SetCenter 00597a70. NOT done: mirror/PiP (PUSH 00750de6/00750df4 +
-  MirrorFix at 00750c23 needs a mid-function hook), FE scaling (FEScaleHook1/2 at
+  GetCenter 00597900 / SetCenter 00597a70. Mirror/PiP (built 2026-10-10, NOT yet run): quad
+  builder 00750b30 (cdecl quad*, x, y, w, h; 4 verts 0x18 apart) is called by 00750c30 (rear
+  mirror) and 00750d40 (PiP); BEFORE/AFTER hooks narrow the 4 x's by (4/3)/aspect (the fix's
+  MirrorFix at 00750c23); instruction_patches PUSH 0.28 at 00750de6 and PUSH [0xc2b420] at
+  00750df4 (slot = ((320+offset)/320-1.042)/-2, fPiPUCAPPosition). FE scaling (FEScaleHook1/2 at
   00730e4d/00730ece), loading-screen pillarboxes, rain droplets, autosculpt/arrest blur,
   options resolution list. `tools/find_pattern.py` finds the fix's byte patterns.
 - Background pause/mute: the game already does it (user-confirmed 2026-10-10: music

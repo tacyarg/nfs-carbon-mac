@@ -59,6 +59,12 @@ POP_MOD_DECLARE_ABI();
 #define SLOT_HUD_OFFSET 0x00c2b414u /* float, the minimap's widescreen offset (120.0) */
 #define SLOT_HUD_CENTRE 0x00c2b418u /* float, six HUD set-ups' 320.0 */
 #define SLOT_CURSOR_WIDTH 0x00c2b41cu /* float, the menu cursor's 640.0 (FMUL at 00731665) */
+#define SLOT_PIP_X 0x00c2b420u        /* float, the picture-in-picture's x (PUSH at 00750df4) */
+
+/* The rear-view mirror and picture-in-picture quads (built by 00750b30 (cdecl, quad *, x, y,
+ * w, h): 4 vertices 0x18 bytes apart, x at +0) are laid out for 4:3; the fix's MirrorFix
+ * narrows their x by (4/3) / aspect so they keep their shape on a wide screen. */
+#define BUILD_SCREEN_QUAD 0x00750b30u
 
 /* HUD floats the code reads in place (the fix's ProtectedGameRefs). */
 #define HUD_SCALE_X 0x009e8f8cu
@@ -256,10 +262,31 @@ static void apply_hud(void) {
     put_float(SLOT_CURSOR_WIDTH, 2.0f * centre); /* the menu spans 0 .. 2 * centre */
     g_hud_offset = 240.0f * g_aspect - 320.0f; /* -CalculateWidescreenOffset(w, h, 640, 480) */
     put_float(SLOT_HUD_OFFSET, g_hud_offset);
+    put_float(SLOT_PIP_X, ((320.0f + g_hud_offset) / 320.0f - 1.042f) / -2.0f); /* fPiPUCAPPosition */
     char line[128];
     snprintf(line, sizeof line, "core.nfsc: HUD scale %.6f, centre %.1f, side offset %.1f", scale, centre,
              g_hud_offset);
     log_line(line);
+}
+
+static uint32_t g_quad;
+static void quad_enter(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocation *inv, void *user) {
+    (void)api;
+    (void)inv;
+    (void)user;
+    g_quad = get_u32(cpu->esp + 4);
+}
+static void quad_leave(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocation *inv, void *user) {
+    (void)api;
+    (void)cpu;
+    (void)inv;
+    (void)user;
+    if (!g_quad)
+        return;
+    const float narrow = (4.0f / 3.0f) / g_aspect;
+    for (uint32_t v = 0; v < 4; ++v)
+        put_float(g_quad + 0x18u * v, bits_float(get_u32(g_quad + 0x18u * v)) * narrow);
+    g_quad = 0;
 }
 
 /* Each group's centre as the game laid it out, so moving it twice never adds up. */
@@ -480,6 +507,10 @@ PopModStatus pop_mod_init(const PopModApi *api) {
             log_line("core.nfsc: the resolution menu is unavailable; widescreen still applies");
         if (api->guest_alloc(api, 8, &g_scratch) != POP_OK)
             g_scratch = 0;
+        /* The mirror and picture-in-picture shapes; widescreen works without them. */
+        if (install(BUILD_SCREEN_QUAD, quad_enter, POP_HOOK_BEFORE, 11) != POP_OK ||
+            install(BUILD_SCREEN_QUAD, quad_leave, POP_HOOK_AFTER, 15) != POP_OK)
+            log_line("core.nfsc: the mirror is not narrowed for the wide screen");
         if ((s = install(SET_WIDESCREEN_MODE, widescreen_mode_enter, POP_HOOK_BEFORE, 2)) != POP_OK ||
             (s = install(SET_WIDESCREEN_MODE, widescreen_mode_leave, POP_HOOK_AFTER, 3)) != POP_OK)
             return s;

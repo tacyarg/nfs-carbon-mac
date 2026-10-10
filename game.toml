@@ -100,6 +100,11 @@ instruction_patches = [
     # core.nfsc's hook on it skips whichever prompt set is not in use, and
     # without core.nfsc the game's load-time hiding (00583d70) still hides them.
     { at = 0x005b092d, text = "NOP" },
+    # Picture-in-picture (00750d40 -> quad builder 00750b30, the fix's "PiP/rearview mirror"):
+    # its width 0.275 becomes 0.28, and its x is read from a slot core.nfsc fills for the
+    # screen's aspect (the fix's fPiPUCAPPosition). core.nfsc then narrows both quads.
+    { at = 0x00750de6, text = "PUSH 0x3e8f5c28" },
+    { at = 0x00750df4, text = "PUSH dword ptr [0x00c2b420]" },
 ]
 # The slots' values without core.nfsc: the original constants (the aspect
 # integers are copied from the game's own at run time by core.nfsc; 3/4 here
@@ -113,6 +118,7 @@ data_seeds = [
     { addr = 0x00c2b414, float = 120.0 },  # the minimap's widescreen offset
     { addr = 0x00c2b418, float = 320.0 },  # the HUD centre
     { addr = 0x00c2b41c, float = 640.0 },  # the menu cursor's width
+    { addr = 0x00c2b420, float = 0.026 },  # the picture-in-picture's x (0x3cd4fdf4)
     # The original six resolutions supported (refresh rates 0 = default),
     # for a run without core.nfsc.
     { addr = 0x00c2b500, value = 1 },
