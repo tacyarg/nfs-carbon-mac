@@ -37,10 +37,10 @@ icons).
   Options → Video, from 640×480 to 4K, including the screen's native sizes. The field of view is
   Hor+ and the HUD is moved out to the edges.
 - **Settings page (F10**, fn+F10 on a Mac keyboard):
-  - Graphics: full screen, borderless or windowed; frame limit (original, 40, 60, or an
-    experimental 120 FPS); world texture filtering up to 16x anisotropic; a performance overlay
-    with frame times (also F11).
-  - Mods: widescreen on/off and how much you see to the sides (Original, Wider, Widest).
+  - Graphics: full screen, borderless or windowed; render resolution (Sharpest, Balanced,
+    Fastest); frame limit (original, 40, 60, or an experimental 120 FPS); world texture filtering
+    up to 16x anisotropic; a performance overlay with frame times (also F11).
+  - Mods: skip intro movies, hide the closed online modes, and how much you see to the sides.
   - Controller: console layout on/off and which button names to show (automatic, Xbox,
     PlayStation, Switch Pro).
 - **Controllers** (a port of NFS-XtendedInput): the console layout (RT gas, LT brake, A handbrake,
@@ -48,7 +48,6 @@ icons).
   pedals, console-style menu prompts while a pad is in use, and the controller's own button names
   (Xbox, PlayStation, Switch Pro). Remapping in Options → Controls still works.
 
-Known issues: the online menus are still shown (say No to connecting).
 
 ## What you need
 
