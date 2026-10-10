@@ -74,7 +74,7 @@ Explain findings plainly and keep commands copy-pasteable.
   slot 0xc2b414 = 240*aspect-320 for SetWideScreenMode's 120.0 (2 redirects); widescreen
   HUD forced on (SETZ 005dc507/005d52b2, JNZ 005b6bae/005b6b5b); BEFORE/AFTER hooks on
   SetWideScreenMode 005d5280 move groups 0x1603009E/0x5D0101F1 via FindObject 005a0250 /
-  GetCenter 00597900 / SetCenter 00597a70. Mirror/PiP (built 2026-10-10, NOT yet run): quad
+  GetCenter 00597900 / SetCenter 00597a70. Mirror/PiP (CONFIRMED by the user 2026-10-10): quad
   builder 00750b30 (cdecl quad*, x, y, w, h; 4 verts 0x18 apart) is called by 00750c30 (rear
   mirror) and 00750d40 (PiP); BEFORE/AFTER hooks narrow the 4 x's by (4/3)/aspect (the fix's
   MirrorFix at 00750c23); instruction_patches PUSH 0.28 at 00750de6 and PUSH [0xc2b420] at
@@ -153,6 +153,34 @@ Explain findings plainly and keep commands copy-pasteable.
   00712b85/00712c65/0072bee0 keep the original tables. HUD re-applied per size change.
 - Source of the fix: github.com/ThirteenAG/WidescreenFixesPack source/NFSCarbon.WidescreenFix
   (Resolution.ixx, Rendering.ixx, Frontend.ixx...). Its addresses match our exe.
+
+## HD UI mod (NFS Carbon Remastered UI 4.4, BadassBaboon; STARTED 2026-10-10)
+- Download: nfsmods.xyz/mod/1095, https://nfsmods.xyz/uploads/mods/1095/f096ab-Remastered-Textures-4-4.7z
+  (52,135,927 bytes, sha256 e55c7d8e...66ab; macOS /usr/bin/tar reads 7z). No stated licence: never
+  ship it; Setup app downloads it (opt-in), like the XtendedInput icons.
+- Contents: RemasteredUI/RemasteredUI.end (Binarius "User" launcher: Files list + Endscript
+  assets/main.end) + 731 DDS + 4 FNG .bin + 2 whole BUNs per language (LANGUAGE/ENG/BUNS/FRONTB2.BUN,
+  GLOBALA.BUN, copied with move_file) + scripts/NFSCHDContentSupport.asi (Aero_, GPL-3,
+  github.com/AeroWidescreen/NFSHDContentSupport). Script commands: bind_textures synchronize (270),
+  replace_texture (139), update_texture (117), delete (64), update_collection (47), import (10),
+  move_file (7), new (6), unpack_stream (2), if collection_exists/checkbox blocks.
+- Plan: build-time rewrite of the app's copy of the game files (what Binarius does on Windows):
+  Python endscript subset + TPK reader/writer (format from Darius, MIT, github.com/nlgxzef/Darius
+  Nikki/Support.Carbon/Class/TPKBlock.cs + Texture.cs; Binarius itself is GPL-3). The game never
+  needs the ASI: HD Content Support only makes layout use the ORIGINAL size for FONT_NFS_BODY/DEBUG
+  (256x256), FONT_NFS_TITLE (512x256), FONT_NFS_MOVIE_LARGE (512x512), FONT_NFS_TACH_NUMBERS (128x64)
+  (reads of TextureInfo +0x28/+0x2a at 00585d20 in 00585d10 and 0071ca06 in 0071c770) and the cursor
+  (fixed 16 at 005853a9/bf/d6/f1 in 00585290). Plan: core.nfsc writes the original sizes back into
+  those TextureInfo records after load (D3D texture already created from the real size).
+- .lzc files are whole-file JDLZ (header 'JDLZ' 02 10, size at +8); the game decompresses only when
+  the header says so (0069eda0), so rewritten files can be stored uncompressed under the same name.
+  A Python JDLZ decoder matched GLOBALB.BUN / InGameB.bun / FRONTB1.BUN byte for byte.
+- TPK (chunk 0xB3300000): info 0xB3310000 {33310001 0x7C header (version, 0x1C collection name,
+  0x40 filename, filename hash), 33310002 key+0 pairs, 33310004 texture headers (0x58 fixed, hash
+  +12, class +16, data offset +20, palette offset +24, size +28, palette size +32, area +36, w/h
+  +40/+42, log2 w/h, compression, mipmaps ..., then name length byte + name, padded to 4), 33310005
+  0x18 per texture (fourcc / 0x15 at +12)}, padding to 0x80, data 0xB3320000 {33320001 0x18, pad
+  0x50 chunk, 33320002 pixels from the next 0x80 boundary, each texture padded to 0x80}.
 
 ## Setup app (tools/installer/, setup.sh, tools/setup_kit/setup.py)
 - CONFIRMED 2026-10-10: a fresh build through the Setup app (selftest: all 7 steps, ~11 min incl.
