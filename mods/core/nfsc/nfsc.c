@@ -120,6 +120,7 @@ static void log_line(const char *text) {
 #include "fe_pad.h" /* console button prompts in the menus */
 #include "hd_ui.h" /* HD fonts and cursor laid out at their original size */
 #include "intro.h" /* skip the start-up movies */
+#include "online.h" /* hide Quick Match / Custom Match */
 
 /* ---- the resolution list --------------------------------------------------
  * The host scales the frame smoothly to the window, aspect kept (game.toml
@@ -498,6 +499,7 @@ PopModStatus pop_mod_init(const PopModApi *api) {
     fe_pad_install(api);
     hd_ui_install();
     intro_install();
+    online_install();
     PopModStatus s = install(SETUP_PROJECTION, setup_projection, POP_HOOK_BEFORE, 0);
     if (s != POP_OK)
         return s;
