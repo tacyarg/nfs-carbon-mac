@@ -12,3 +12,4 @@ run-log.txt
 run-summary.txt
 build-log.txt
 *.log
+first-launch/

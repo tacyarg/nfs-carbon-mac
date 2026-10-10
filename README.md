@@ -29,9 +29,10 @@ icons).
 
 ## What works
 
-- Native Apple Silicon app with its own icon (read from your NFSC.exe), **Game Mode**, and saves in
+- Native Apple Silicon app with its own icon (read from your NFSC.exe); saves and settings in
   `~/Library/Application Support/NFS Carbon` like any Mac game.
-- Full 3D: races, the garage and menu scenes, car reflections, colour grading.
+- **Game Mode**: macOS gives the game priority on the CPU and GPU and lowers controller and
+  AirPods latency when it runs full screen.
 - **Widescreen** (a port of ThirteenAG's widescreen fix): any resolution and aspect ratio in
   Options → Video, from 640×480 to 4K, including the screen's native sizes. The field of view is
   Hor+ and the HUD is moved out to the edges.
@@ -41,7 +42,6 @@ icons).
   B nitrous, X speedbreaker, Y crew, LB look back, RB camera, right stick to shift), triggers as analog
   pedals, console-style menu prompts while a pad is in use, and the controller's own button names
   (Xbox, PlayStation, Switch Pro). Remapping in Options → Controls still works.
-- The music pauses when you switch to another app (the game's own behaviour).
 
 Known issues: the very first launch can go black after the EA splash (quit and open it again);
 the rear-view mirror is not widescreen yet; the online menus are still shown (say No to connecting).

@@ -445,6 +445,35 @@ static void setup_projection(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvoc
     }
 }
 
+
+/* TEMPORARY (2026-10-10): the detail level ("Level of Detail", 00ab0ae8: 0 Low, 1 Medium,
+ * 2 High, 4 Maximum, 5 Custom) is set back to High; log who loads, saves, detects or changes it. */
+#define DIAG_LEVEL 0x00ab0ae8u
+#define DIAG_FIRST_TIME 0x00a6538cu
+static uint32_t g_diag_hooks[12];
+static void diag_hook(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocation *inv, void *user) {
+    (void)inv;
+    char line[160];
+    snprintf(line, sizeof line, "core.nfsc diag: %s level=%u first_time=%u caller=%08x arg=%08x", (const char *)user,
+             get_u32(DIAG_LEVEL), get_u32(DIAG_FIRST_TIME), get_u32(cpu->esp), get_u32(cpu->esp + 4));
+    api->log(api, line);
+}
+static void diag_install(void) {
+    static const struct {
+        uint32_t addr;
+        const char *before, *after;
+    } k[] = {
+        {0x00711810, "load>", "load<"},         {0x00711bd0, "save>", "save<"},
+        {0x0071d0a0, "autodetect>", "autodetect<"}, {0x004a5010, "set>", "set<"},
+        {0x004a5190, "inc>", "inc<"},           {0x007346b0, "installkeys>", "installkeys<"},
+    };
+    int n = 0;
+    for (size_t i = 0; i < sizeof k / sizeof k[0]; ++i) {
+        g_api->hook_install(g_api, k[i].addr, diag_hook, POP_HOOK_BEFORE, (void *)k[i].before, &g_diag_hooks[n++]);
+        g_api->hook_install(g_api, k[i].addr, diag_hook, POP_HOOK_AFTER, (void *)k[i].after, &g_diag_hooks[n++]);
+    }
+}
+
 static PopModStatus install(uint32_t addr, PopHookFn fn, int32_t mode, int slot) {
     PopModStatus s = g_api->hook_install(g_api, addr, fn, mode, 0, &g_hooks[slot]);
     if (s != POP_OK) {
@@ -462,6 +491,7 @@ PopModStatus pop_mod_init(const PopModApi *api) {
     if (g_scaling < 0 || g_scaling > 2)
         g_scaling = 1;
     fov_original();
+    diag_install(); /* TEMPORARY */
     pad_install();
     fe_pad_install(api);
     PopModStatus s = install(SETUP_PROJECTION, setup_projection, POP_HOOK_BEFORE, 0);
@@ -489,6 +519,9 @@ PopModStatus pop_mod_init(const PopModApi *api) {
 }
 
 PopModStatus pop_mod_exit(void) {
+    for (unsigned i = 0; i < sizeof g_diag_hooks / sizeof g_diag_hooks[0]; ++i)
+        if (g_diag_hooks[i])
+            g_api->hook_remove(g_api, g_diag_hooks[i]);
     for (unsigned i = 0; i < sizeof g_hooks / sizeof g_hooks[0]; ++i)
         if (g_hooks[i]) {
             g_api->hook_remove(g_api, g_hooks[i]);
