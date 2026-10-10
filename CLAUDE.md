@@ -3,9 +3,8 @@
 Port of Need for Speed: Carbon (PC v1.4, unwrapped NFSC.exe) to macOS using
 veritr1x's recomp-kit, taken from the NFS Most Wanted Mac port
 (github.com/elforeign/nfs-most-wanted-mac, local clone ~/nfs-most-wanted-mac).
-The kit's copy lives in `kit/` with our changes on top. Mac: M4 MacBook Air
-(fanless), macOS 27. The user is comfortable in Terminal but not a C/x86 dev:
-explain findings plainly, keep commands copy-pasteable.
+The kit's copy lives in `kit/` with our changes on top. Developed on macOS 27, Apple Silicon.
+Explain findings plainly and keep commands copy-pasteable.
 
 ## Working rules
 - Get evidence before patching: read the listing (`analysis/decompiled/<image>/functions/<addr>.asm`),
@@ -16,7 +15,7 @@ explain findings plainly, keep commands copy-pasteable.
 - Rebuild: `source .venv/bin/activate && python tools/build.py` (add `--regenerate`
   only when `kit/tools/recomp/translate.py` or `game.toml` changed).
 - Never run the build or game from inside `original/`'s parent via `..`:
-  `original/` is a symlink to the game folder in ~/Downloads.
+  `original/` is a symlink to your game folder.
 
 ## Layout
 - `game.toml`: exe identity (sha256 baaaaec3…fd3, base 0x400000, entry 0x87e926),
@@ -53,7 +52,6 @@ explain findings plainly, keep commands copy-pasteable.
   the root cause of the black (why a slow first frame stalls the game) is NOT found.
 - Run from /Applications, not dist/: inside the checkout the runtime sees game.toml
   above it and behaves as a developer build.
-- The dev save (NFS Carbon Dev profile) was copied into the NFS Carbon profile 2026-10-10.
 
 ## Mods (mods/core/nfsc, game.toml)
 - `mods/CMakeLists.txt` builds every mods/core/<id>/ plugin (kit build_core.py) into the
@@ -201,7 +199,7 @@ explain findings plainly, keep commands copy-pasteable.
 14. Host (`carbon-kit-notch-fullscreen.patch`): note_screen_size also records the
    full-screen size = display minus NSScreen.safeAreaInsets.top (helper
    host_mac_safe_top_points in metal_surface.mm); mods' screen_size prefers it. On the
-   M4 Air: display 3420x2214, full screen 3420x2146 (notch strip 68 px), so the game is
+   13" notched MacBook Air: display 3420x2214, full screen 3420x2146 (notch strip 68 px), so the game is
    1710x1073 and fills the window; 1710x1107 was shrunk to fit -> side borders.
 13. Runtime (`carbon-kit-screen-size.patch`): host_display_screen falls back to
    host_display_screen_size, so mods' screen_size() works on the desktop host.
