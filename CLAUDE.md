@@ -294,7 +294,7 @@ Explain findings plainly and keep commands copy-pasteable.
   (005bb83b/005bd4a3/005bd4b0, 00857701 PUSH 0), autosave 005cd170 JMP 005cd14d, world-map cursor
   00570dcd/00570ddc, CrashFix 0059606d/005960a9, car shadow slot c2b424, water reflections
   (redirects to c2b430/c2b434, 0071a9f7 MOV EDX,0xf0, NOP 0071a9fc), rain 00722cb0 (slots c2b428 =
-  0.5/aspect, c2b42c = 0.5, filled in apply_hud; rain NOT yet tested). Arrest blur 0x9d0584 written
+  0.5/aspect, c2b42c = 0.5, filled in apply_hud; rain CONFIRMED by the user). Arrest blur 0x9d0584 written
   in apply_hud. Autosculpt = the cursor redirect at 00731665 (already there).
 - MoviePlaybackFix (Misc.ixx) was ported, added a few seconds' pause after the intro, and was
   REMOVED at the user's request: the start-up black screen was the focus-order bug (kit change 19).
