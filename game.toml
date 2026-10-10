@@ -178,3 +178,8 @@ required_dirs = ["CARS", "FRONTEND", "GLOBAL", "SOUND", "TRACKS"]
 [bundle]
 # The stock runtime DLLs stay out; the rebased copies are bundled instead.
 exclude = ["Uninstall", "Support", "scripts", "SAVE", "*.dll", "*.asi", "*.txt"]
+
+[settings]
+# A 3D game: fill the screen at any resolution (the kit's default "integer"
+# scales by whole multiples only, so most sizes left black borders).
+scaling = "smooth"
