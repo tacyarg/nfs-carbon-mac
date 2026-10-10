@@ -81,7 +81,7 @@ POP_MOD_DECLARE_ABI();
 #define HUD_RIGHT_GROUP 0x5D0101F1u
 
 static const PopModApi *g_api;
-static uint32_t g_hooks[16];
+static uint32_t g_hooks[24];
 static int g_widescreen = 1;
 static int g_scaling = 1;
 static uint32_t g_w = 1280, g_h = 720;
@@ -118,6 +118,7 @@ static void log_line(const char *text) {
 
 #include "pad.h" /* controller layout, analog triggers, button names */
 #include "fe_pad.h" /* console button prompts in the menus */
+#include "hd_ui.h" /* HD fonts and cursor laid out at their original size */
 
 /* ---- the resolution list --------------------------------------------------
  * The host scales the frame smoothly to the window, aspect kept (game.toml
@@ -494,6 +495,7 @@ PopModStatus pop_mod_init(const PopModApi *api) {
     fov_original();
     pad_install();
     fe_pad_install(api);
+    hd_ui_install();
     PopModStatus s = install(SETUP_PROJECTION, setup_projection, POP_HOOK_BEFORE, 0);
     if (s != POP_OK)
         return s;

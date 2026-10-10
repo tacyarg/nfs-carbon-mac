@@ -101,11 +101,12 @@ func prepareSource() throws {
     try version.write(to: marker, atomically: true, encoding: .utf8)
 }
 
-func setupArguments(game: URL, dest: URL, icons: Bool, checkOnly: Bool) -> [String] {
+func setupArguments(game: URL, dest: URL, icons: Bool, hdUI: Bool = false, checkOnly: Bool) -> [String] {
     var a = [workDir.appendingPathComponent("setup.sh").path, game.path]
     if checkOnly { return a + ["--check-only"] }
     a += ["--out", dest.path]
     if icons { a.append("--button-icons") }
+    if hdUI { a.append("--hd-ui") }
     return a
 }
 
@@ -167,6 +168,7 @@ final class Setup: ObservableObject {
     @Published var gameStatus = ""
     @Published var gameOK = false
     @Published var icons = false
+    @Published var hdUI = false
     // Here rather than a view's @State: the Command Line Tools on macOS 27 lack SwiftUI's macro plugin.
     @Published var showReadMe = false
     @Published var dest: URL
@@ -300,7 +302,7 @@ final class Setup: ObservableObject {
                                                          reason: "Building \(gameAppName)")
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = setupArguments(game: game, dest: dest, icons: icons, checkOnly: false)
+        p.arguments = setupArguments(game: game, dest: dest, icons: icons, hdUI: hdUI, checkOnly: false)
         p.currentDirectoryURL = workDir
         p.environment = setupEnvironment()
         let pipe = Pipe()
@@ -482,6 +484,11 @@ struct ContentView: View {
                         .disabled(s.busy)
                     Text("Xbox, PlayStation and Switch button pictures from the NFS-XtendedInput mod (art by Aero_), "
                          + "downloaded from its GitHub release. Without them, or offline, the menus show keyboard-style prompts.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Toggle("HD menus, HUD and fonts (optional download, about 52 MB)", isOn: $s.hdUI)
+                        .disabled(s.busy)
+                    Text("NFS Carbon Remastered UI by BadassBaboon, downloaded from nfsmods.xyz and installed into the app's own copy "
+                         + "of the game (your game folder is not changed). Sharper fonts, menus, HUD, crew logos and cutscene characters.")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }.padding(4)
             }

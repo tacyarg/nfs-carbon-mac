@@ -122,6 +122,8 @@ def main():
     ap.add_argument("--game", type=Path, required=True, help="your game folder (the one with NFSC.exe)")
     ap.add_argument("--out", type=Path, default=ROOT / "dist", help="where to write the app (default dist/)")
     ap.add_argument("--install", action="store_true", help="also copy the app to /Applications")
+    ap.add_argument("--hd-ui", action="store_true",
+                    help="download and install the NFS Carbon Remastered UI HD textures (about 52 MB) into the app's copy")
     ap.add_argument("--button-icons", action="store_true",
                     help="download XtendedInput's controller button icons (about 1.5 MB) for the menus")
     ap.add_argument("--icon", type=Path, help="a picture to use as the app icon (default: the game's own icon)")
@@ -177,6 +179,13 @@ def main():
             (res / "Game/GLOBAL").mkdir(exist_ok=True)
             shutil.copyfile(icons, res / "Game" / ICONS_MEMBER)
             print("button icons: added")
+    if a.hd_ui:
+        sys.path.insert(0, str(KIT))
+        import hd_ui
+        mod = hd_ui.archive()
+        if mod:
+            print("HD UI: installing Remastered UI into the app's copy of the game ...")
+            hd_ui.install(res / "Game", mod)
 
     info = tmp / "Contents/Info.plist"
     plist = plistlib.loads(info.read_bytes())

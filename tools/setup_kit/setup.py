@@ -2,7 +2,7 @@
 """The setup kit: turn your own installed copy of Need for Speed: Carbon (PC, v1.4) into the native Mac app.
 Run through ./setup.sh, which prepares the Python environment first.
 
-    ./setup.sh "/path/to/Need for Speed - Carbon" [--out DIR] [--button-icons] [--check-only]
+    ./setup.sh "/path/to/Need for Speed - Carbon" [--out DIR] [--button-icons] [--hd-ui] [--check-only]
 
 Steps: check the game folder, NFSC.exe and its runtime DLLs -> link the game (nothing in it is changed) ->
 relocate the runtime DLLs -> analyse NFSC.exe once (Ghidra and a Java runtime, pinned hashes) -> translate and
@@ -113,6 +113,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("game", type=Path, help="your installed game folder (holds NFSC.exe, GLOBAL, TRACKS, ...)")
     ap.add_argument("--out", type=Path, default=ROOT / "dist", help="where to put the app (default dist/)")
+    ap.add_argument("--hd-ui", action="store_true",
+                    help="download and install the NFS Carbon Remastered UI HD textures (about 52 MB)")
     ap.add_argument("--button-icons", action="store_true",
                     help="download XtendedInput's controller button icons for the menus (about 1.5 MB)")
     ap.add_argument("--check-only", action="store_true", help="only check the game folder")
@@ -156,15 +158,19 @@ def main():
     if not (ROOT / "build/CarbonRecomp.app/Contents/MacOS/CarbonRecomp").is_file():
         fail("the build finished without build/CarbonRecomp.app")
 
-    say("6/7 Controller button icons")
-    say("  downloading XtendedInput's icons while packaging" if args.button_icons
-        else "  not added (menus use keyboard-style prompts); choose them in the Setup app or pass --button-icons")
+    say("6/7 Optional downloads")
+    say("  controller button icons: " + ("downloading XtendedInput's icons while packaging" if args.button_icons
+        else "not added (menus use keyboard-style prompts); choose them in the Setup app or pass --button-icons"))
+    say("  HD UI: " + ("downloading and installing Remastered UI while packaging" if args.hd_ui
+        else "not added; choose it in the Setup app or pass --hd-ui"))
 
     say("7/7 Packaging")
     out = args.out.expanduser().resolve()
     package = [PY, "tools/setup_kit/package.py", "--game", game, "--out", out]
     if args.button_icons:
         package.append("--button-icons")
+    if args.hd_ui:
+        package.append("--hd-ui")
     run(package)
     say(f"\nDone: {out / (APP_NAME + '.app')}\nYour saves and settings will be in "
         "~/Library/Application Support/NFS Carbon/.")

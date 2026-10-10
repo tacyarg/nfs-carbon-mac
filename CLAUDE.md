@@ -182,6 +182,16 @@ Explain findings plainly and keep commands copy-pasteable.
   header at the END; flags 0 raw, 1 one compressed block, 2 by parts (LZ magic blocks)) are NOT read
   yet: DYNTEX.BIN, WMDYNTEX.BIN, TRACKS/L5RA/TRACKMAPS.BIN, MINI_MAP_*.BIN (+ likely NIS bundles).
   RAWW (stored) blocks are accepted by the game (0069eda0), so a writer can avoid a real compressor.
+- Stage 1 BUILT 2026-10-10, NOT yet run: tools/setup_kit/hd_ui.py (Endscript subset: if
+  collection_exists, combobox (English / Vanilla), checkbox (disabled branch), move_file (skips
+  scripts/*.asi), bind_textures synchronize/override, replace_texture, update_texture (FIELDS map),
+  import synchronize (FNG 0x30203 chunk with the same .fng name), unlock_memory (Darius FastUnlock x4
+  + LongUnlock blob for GlobalMemoryFile.bin)); package.py/setup.py --hd-ui; Setup app checkbox;
+  mods/core/nfsc/hd_ui.h writes original sizes into GetTextureInfo(0055cfd0) records each frame
+  (BEFORE 00600c90, hook slot 16; g_hooks now 24). Archive cached in ~/Library/Caches/NFS Carbon
+  Setup. Writes FrontB1.lzc 40 MB, GlobalB.lzc 117 MB, InGameA.bun, InGameB.lzc, GLOBALA.BUN,
+  FRONTB2.BUN, 5 memory files, ~45 NIS bundles. Skipped: WMDYNTEX/DYNTEX/minimaps/TRACKMAPS
+  (compressed), streamed L5RA textures, WORLDMAPMAIN import + calibration.
 - Order of work: (1) whole-file copies (GLOBALA/FRONTB2 per language) + uncompressed TPKs (FRONTB1,
   GLOBALA, INGAMEA, INGAMEB, GLOBALB) + font/cursor original-size fix in core.nfsc + Setup checkbox;
   (2) compressed TPKs + FNG imports + NIS; (3) the optional extras (2015 minimap etc.).
