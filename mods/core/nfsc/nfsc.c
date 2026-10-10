@@ -121,7 +121,6 @@ static void log_line(const char *text) {
 #include "hd_ui.h" /* HD fonts and cursor laid out at their original size */
 #include "intro.h" /* skip the start-up movies */
 #include "online.h" /* hide Quick Match / Custom Match */
-#include "movie.h" /* movies wait for their audio (the fix's MoviePlaybackFix) */
 
 /* ---- the resolution list --------------------------------------------------
  * The host scales the frame smoothly to the window, aspect kept (game.toml
@@ -507,7 +506,6 @@ PopModStatus pop_mod_init(const PopModApi *api) {
     hd_ui_install();
     intro_install();
     online_install();
-    movie_install();
     PopModStatus s = install(SETUP_PROJECTION, setup_projection, POP_HOOK_BEFORE, 0);
     if (s != POP_OK)
         return s;

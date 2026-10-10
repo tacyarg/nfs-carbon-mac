@@ -289,6 +289,19 @@ Explain findings plainly and keep commands copy-pasteable.
   copy) used a different exe -> Setup rejects them. package.py game_language(): one non-English
   language in LANGUAGES -> Defaults/registry.json gets Language (first-run profiles only).
 
+## NFSCarbon.WidescreenFix port (rest, 2026-10-11; user: HD intro, widescreen movies, loading screens OK)
+- game.toml patches: movie text 005ab6d7, native WS movies 005bb818/005bd4a1, EAHD_Bumper pushes
+  (005bb83b/005bd4a3/005bd4b0, 00857701 PUSH 0), autosave 005cd170 JMP 005cd14d, world-map cursor
+  00570dcd/00570ddc, CrashFix 0059606d/005960a9, car shadow slot c2b424, water reflections
+  (redirects to c2b430/c2b434, 0071a9f7 MOV EDX,0xf0, NOP 0071a9fc), rain 00722cb0 (slots c2b428 =
+  0.5/aspect, c2b42c = 0.5, filled in apply_hud; rain NOT yet tested). Arrest blur 0x9d0584 written
+  in apply_hud. Autosculpt = the cursor redirect at 00731665 (already there).
+- MoviePlaybackFix (Misc.ixx) was ported, added a few seconds' pause after the intro, and was
+  REMOVED at the user's request: the start-up black screen was the focus-order bug (kit change 19).
+  If a movie ever fails to start again: a lighter version (wait <= ~0.5 s, callsite hook on
+  008d3ca0 returning to 00888917, SleepEx via IAT 0x9c1140) - git 3a97c02 has the full version.
+- Not ported (not widescreen): Camera.ixx free look, PostFX SMAA, MSAA, SimRate/high-FPS.
+
 ## Kit changes made so far (all in kit/)
 1. Loader: aux DLLs map before the exe's IAT is bound; exe imports bind to their
    exports; statically imported DLLs get DllMain(PROCESS_ATTACH) in key order before
