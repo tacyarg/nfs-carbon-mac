@@ -17,6 +17,8 @@ let workDir = supportDir.appendingPathComponent("source")
 // What an update keeps: the analysis of NFSC.exe, the Python environment, the build cache, the game link.
 let keptOnUpdate: Set<String> = ["analysis", ".venv", "build", "original", "rebased", "dist"]
 let projectURL = "https://github.com/vasist15-source/nfs-carbon-mac"
+// The HD UI option (tools/setup_kit/hd_ui.py) stays hidden until a career saved without it loads with it.
+let offerHDUI = false
 
 enum Phase { case idle, checking, building, done, failed, cancelled }
 
@@ -485,11 +487,13 @@ struct ContentView: View {
                     Text("Xbox, PlayStation and Switch button pictures from the NFS-XtendedInput mod (art by Aero_), "
                          + "downloaded from its GitHub release. Without them, or offline, the menus show keyboard-style prompts.")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if offerHDUI {
                     Toggle("HD menus, HUD and fonts (optional download, about 52 MB)", isOn: $s.hdUI)
                         .disabled(s.busy)
                     Text("NFS Carbon Remastered UI by BadassBaboon, downloaded from nfsmods.xyz and installed into the app's own copy "
                          + "of the game (your game folder is not changed). Sharper fonts, menus, HUD, crew logos and cutscene characters.")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
                 }.padding(4)
             }
 

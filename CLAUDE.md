@@ -239,7 +239,7 @@ Explain findings plainly and keep commands copy-pasteable.
   (WM_ACTIVATE "inactive"), host focused; main thread blocked in GetMessageA (the game's paused
   loop), no audio. host/sdl/main.cpp queue_or_apply queued a focus LOSS during an idle slice and
   applied the following GAIN immediately, so (1) reached the guest before (0). Fix (kit change 19,
-  built, NOT yet run): input arriving outside a slice while older input waits is appended and the
+  CONFIRMED 2026-10-10 22:3x: many launches, no black screen): input arriving outside a slice while older input waits is appended and the
   queue drained in order; apply_focus posts the CURRENT g_focused. lldb attach to the app works
   (ad hoc signed): `lldb -p PID --batch -o "p/x *(unsigned long*)&g_mem"` then guest addr + base.
 - Second black-screen kind (2026-10-10 21:0x, focus flags fine, F10 page draws over it, no music):
