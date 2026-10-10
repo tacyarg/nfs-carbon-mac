@@ -1,29 +1,86 @@
-# nfsc-mac — Need for Speed: Carbon on Apple Silicon (recomp-kit bring-up)
+# Need for Speed: Carbon — Native for Apple Silicon Macs
 
-Built on the MW port's copy of veritr1x's recomp-kit. Bring your own PC game
-(v1.4 NFSC.exe, sha256 baaaaec3...fd3, with msvcr71.dll and msvcp71.dll).
+A native macOS build of the 2006 PC game, made by **static recompilation**: the game's own x86 code is
+translated to C ahead of time and compiled for Apple Silicon, with a Metal renderer, native audio and
+native controller support. There is no emulator, no Wine and no CrossOver.
 
-## First run
+> **You need your own copy of the game.** This repository contains **no game code, executables,
+> artwork, sound, movies or tracks**. The build takes the files from **your** installation and makes
+> the app on **your** Mac. Nothing it builds is meant to be shared.
 
-    GAME="/Users/vasisht11/Downloads/Need-for-Speed-Carbon/Need for Speed - Carbon"
-    cd ~/nfsc-mac
-    cp -R ~/nfs-most-wanted-mac/kit kit
-    (cd kit && patch -p1 < ../carbon-kit.patch)
-    python3 -m venv .venv && .venv/bin/pip install -r kit/requirements-dev.txt
-    .venv/bin/python tools/setup.py --install "$GAME" --link-only
-    .venv/bin/python tools/rebase_pe.py "$GAME"
-    .venv/bin/python tools/analyze.py --ghidra-home <Ghidra 12.1.3 folder> --java-home <JDK folder>
-    .venv/bin/python tools/build.py --regenerate
+This project is not affiliated with or endorsed by Electronic Arts. *Need for Speed* and *Carbon* are
+trademarks of Electronic Arts Inc.
 
-Ghidra and the JDK are already downloaded by the MW setup, under
-~/Library/NFSMW-Native-Setup/.
+**Status: early, but playable.** Career, races, the garage and the menus work at 60 fps with sound.
+A Setup app (choose your game folder, get the app in Applications) is in progress; until then the
+build is done in Terminal, below.
 
-## What carbon-kit.patch changes
+## What works
 
-- runtime/loader.*: aux DLLs load before the exe's imports are bound, the
-  exe's imports bind to them, their DllMains run before the game's entry, and
-  a stock DLL beside the exe no longer shadows the rebased copy.
-- runtime/kernel32_wide.cpp, runtime/misc.cpp: kernel32, advapi32, ole32,
-  rpcrt4 and ws2_32 functions Carbon and msvcr71/msvcp71 import.
-- dx/d3dx9.cpp: D3DX shims also registered as d3dx9_30.dll; six missing
-  texture/surface functions fail cleanly and log once.
+- Native Apple Silicon app with its own icon (read from your NFSC.exe), **Game Mode**, and saves in
+  `~/Library/Application Support/NFS Carbon` like any Mac game.
+- Full 3D: races, the garage and menu scenes, car reflections, colour grading.
+- **Widescreen** (a port of ThirteenAG's widescreen fix): any resolution and aspect ratio in
+  Options → Video, from 640×480 to 4K, including the screen's native sizes. The field of view is
+  Hor+ and the HUD is moved out to the edges.
+- **Full screen, borderless or windowed**, from the settings page (**F10**, or fn+F10 on a Mac
+  keyboard), which also holds the mods' settings and the frame-rate limit.
+- **Controllers** (a port of NFS-XtendedInput): the console layout (RT gas, LT brake, A handbrake,
+  B nitrous, X speedbreaker, Y crew, LB look back, RB camera, right stick to shift), triggers as analog
+  pedals, console-style menu prompts while a pad is in use, and the controller's own button names
+  (Xbox, PlayStation, Switch Pro). Remapping in Options → Controls still works.
+- The music pauses when you switch to another app (the game's own behaviour).
+
+Known issues: the very first launch can go black after the EA splash (quit and open it again);
+the rear-view mirror is not widescreen yet; the online menus are still shown (say No to connecting).
+
+## What you need
+
+- An Apple Silicon Mac and the Xcode Command Line Tools (`xcode-select --install`).
+- Python 3.
+- Your installed PC game, **version 1.4**, with an unwrapped `NFSC.exe`
+  (SHA-256 `baaaaec33873d4ba7e4dbae6a5212049ffdcf9679a35d865d7625b4189952fd3`; the build checks it)
+  and the `msvcr71.dll` / `msvcp71.dll` from the game folder.
+
+## Build it in Terminal
+
+```
+GAME="/path/to/Need for Speed - Carbon"         # your game folder, the one with NFSC.exe
+cd nfsc-mac
+python3 -m venv .venv && .venv/bin/pip install -r kit/requirements-dev.txt
+.venv/bin/python tools/setup.py --install "$GAME" --link-only
+.venv/bin/python tools/rebase_pe.py "$GAME"
+.venv/bin/python tools/fetch_tools.py            # Ghidra + Java, once; prints two paths
+.venv/bin/python tools/analyze.py --ghidra-home <Ghidra path> --java-home <Java path>
+.venv/bin/python tools/build.py --regenerate
+.venv/bin/python tools/setup_kit/package.py --game "$GAME" --install
+```
+
+The last step puts **Need for Speed Carbon** in /Applications. The app holds your copy of the game, so
+don't share it. Logs from each launch are in `~/Library/Application Support/NFS Carbon/Logs`.
+
+## How it works
+
+The translator, runtime, Direct3D 9 → Metal renderer, audio and input hosts are
+[recomp-kit](https://github.com/veritr1x/recomp-kit) by veritr1x, included in `kit/` with this port's
+changes (history in `docs/kit-patches/` and git). This repository adds what makes Carbon run:
+
+- `game.toml`: the game's identity, extra entry points, and translate-time fixes (operand redirects,
+  instruction patches) that stand in for the binary patches PC mods make.
+- `mods/core/nfsc/`: the built-in mod (widescreen, resolution list, controller layout and prompts).
+- `tools/`: Ghidra analysis, DLL rebasing, build wrappers, and `setup_kit/` (packaging, launcher, icon).
+- `CLAUDE.md`: the bring-up notes — every problem found, its evidence and its fix.
+
+The approach and much of the setup follow the
+[Need for Speed: Most Wanted Mac port](https://github.com/elforeign/nfs-most-wanted-mac).
+
+## Credits
+
+- **recomp-kit** — veritr1x
+- **Need for Speed: Most Wanted Mac port** — elforeign, whose setup, mod and controller work this port
+  started from
+- **NFSCarbon.WidescreenFix** (WidescreenFixesPack) — ThirteenAG, MIT; reimplemented in `mods/core/nfsc`
+- **NFS-XtendedInput** — xan1242 (Lovro Pleše) and Berkay Yiğit, MIT; button icons by Aero_ (not
+  included; see NOTICE)
+
+See [NOTICE](NOTICE) for the licences.

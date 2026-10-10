@@ -11,6 +11,8 @@ explain findings plainly, keep commands copy-pasteable.
 - Get evidence before patching: read the listing (`analysis/decompiled/<image>/functions/<addr>.asm`),
   the bytes (`xxd`), or the log line first. Guessing cost several rounds on `_initterm`.
 - Kit changes go in `kit/` directly; commit them in git with a message saying why.
+- Never commit game files or anything derived from them (original/, rebased/, analysis/,
+  build/, dist/ are ignored).
 - Rebuild: `source .venv/bin/activate && python tools/build.py` (add `--regenerate`
   only when `kit/tools/recomp/translate.py` or `game.toml` changed).
 - Never run the build or game from inside `original/`'s parent via `..`:
@@ -25,7 +27,8 @@ explain findings plainly, keep commands copy-pasteable.
 - `tools/`: analyze.py (Ghidra over exe + both DLLs), fetch_tools.py (Ghidra 12.1.3 +
   JDK 26 into ~/Library/NFSC-Native-Setup), rebase_pe.py, who_names.py (who names an
   address), inspect_exe.py, build.py/setup.py wrappers.
-- `carbon-kit*.patch`: history of kit changes, all already applied to `kit/`.
+- `docs/kit-patches/carbon-kit*.patch`: history of kit changes 1-15, all already applied to
+  `kit/`. Since 2026-10-10 the project is a git repo: kit changes are commits, no new patch files.
 
 ## Packaging (tools/setup_kit/)
 - `package.py --game DIR [--install]`: build/CarbonRecomp.app + your game folder ->
@@ -257,7 +260,7 @@ explain findings plainly, keep commands copy-pasteable.
   prompt still hangs, find who writes/calls 016b0b64 next.
 - Bulk static scan FAILED (2026-10-10 01:51): `tools/find_missed_functions.py` found
   42k "function start after RET/INT3/JMP" candidates (analysis/scanned-entries.UNUSED-broke-boot.txt);
-  building with them (`--discovered`) crashed on boot: real functions such as the
+  building with them (`--discovered`) crashed on boot (the scanner, tools/find_missed_functions.py, was deleted in the cleanup): real functions such as the
   WndProc 00712060 became unknown targets, then SIGBUS at EIP 0. Don't feed the
   translator a static guess list. Reverted after the 02:06 crash: build is back to the good one
   (58164 functions, 18 recovery errors) plus 0x0089777e in game.toml (unknown target
