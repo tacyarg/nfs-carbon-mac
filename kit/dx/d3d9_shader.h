@@ -106,6 +106,11 @@ struct Dst {
 struct Src {
     uint32_t type = 0, index = 0, swz = 0xe4, mod = 0; // 0xe4: xyzw
     bool rel = false;
+    // SM 2.0+ relative addressing names its index in an extra token: the
+    // address register a0 (component rel_comp) or the loop counter aL.
+    // SM 1.x has no such token and always uses a0.x.
+    uint32_t rel_comp = 0;
+    bool rel_loop = false;
 };
 struct Inst {
     uint32_t op = 0;

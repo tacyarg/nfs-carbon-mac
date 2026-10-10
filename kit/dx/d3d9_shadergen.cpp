@@ -289,8 +289,10 @@ struct Gen {
             return buf;
         case R_CONST:
             if (s.rel && !p.pixel) {
-                snprintf(buf, sizeof buf, "c[clamp(%s(a0.x) + %u, 0, %u)]", wgsl() ? "i32" : "int",
-                         s.index, glsl() || wgsl() ? const_limit - 1 : 255);
+                static const char *const comp[4] = {"a0.x", "a0.y", "a0.z", "a0.w"};
+                snprintf(buf, sizeof buf, "c[clamp(%s(%s) + %u, 0, %u)]", wgsl() ? "i32" : "int",
+                         s.rel_loop ? "aL" : comp[s.rel_comp & 3], s.index,
+                         glsl() || wgsl() ? const_limit - 1 : 255);
                 return buf;
             }
             snprintf(buf, sizeof buf, "c[%u]", s.index);

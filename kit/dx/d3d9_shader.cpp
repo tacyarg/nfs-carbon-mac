@@ -232,8 +232,13 @@ Program load(const std::vector<uint8_t> &code) {
         while (k < end && in.nsrc < 4) {
             bool extra = false;
             Src s = src_of(tok(k++), extra);
-            if (extra)
-                ++k;
+            if (extra) {
+                // The index register: its type, and which component the
+                // swizzle selects (skinning reads bones through a0.y/z/w).
+                const uint32_t r = tok(k++);
+                s.rel_loop = (((r >> 28) & 7) | ((r & 0x1800) >> 8)) == R_LOOP;
+                s.rel_comp = (r >> 16) & 3;
+            }
             if (s.type == R_CONST) {
                 if (s.rel)
                     p.relative = true;
