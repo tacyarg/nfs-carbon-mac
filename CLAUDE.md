@@ -147,6 +147,16 @@ Explain findings plainly and keep commands copy-pasteable.
 - Source of the fix: github.com/ThirteenAG/WidescreenFixesPack source/NFSCarbon.WidescreenFix
   (Resolution.ixx, Rendering.ixx, Frontend.ixx...). Its addresses match our exe.
 
+## Setup app (tools/installer/, setup.sh, tools/setup_kit/setup.py)
+- CONFIRMED 2026-10-10: a fresh build through the Setup app (selftest: all 7 steps, ~11 min incl.
+  analysis on an M4) and the user's own install from the disk image both work; game plays as before.
+- `tools/installer/build_installer.sh [version]` -> dist/NFS-Carbon-Setup-<version>.dmg (carries
+  `git archive HEAD`, so commit first). `Setup --snapshot DIR` renders every window state;
+  `Setup --selftest GAME OUT` runs check + build headless. No @State in SwiftUI views: the macOS 27
+  Command Line Tools have no SwiftUI macro plugin.
+- setup.py pins NFSC.exe (game.toml sha256) and the stock msvcr71/msvcp71 hashes (game.toml's
+  addresses inside them are for those exact files).
+
 ## Kit changes made so far (all in kit/)
 1. Loader: aux DLLs map before the exe's IAT is bound; exe imports bind to their
    exports; statically imported DLLs get DllMain(PROCESS_ATTACH) in key order before
