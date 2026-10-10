@@ -121,6 +121,7 @@ static void log_line(const char *text) {
 #include "hd_ui.h" /* HD fonts and cursor laid out at their original size */
 #include "intro.h" /* skip the start-up movies */
 #include "online.h" /* hide Quick Match / Custom Match */
+#include "movie.h" /* movies wait for their audio (the fix's MoviePlaybackFix) */
 
 /* ---- the resolution list --------------------------------------------------
  * The host scales the frame smoothly to the window, aspect kept (game.toml
@@ -266,6 +267,12 @@ static void apply_hud(void) {
     g_hud_offset = 240.0f * g_aspect - 320.0f; /* -CalculateWidescreenOffset(w, h, 640, 480) */
     put_float(SLOT_HUD_OFFSET, g_hud_offset);
     put_float(SLOT_PIP_X, ((320.0f + g_hud_offset) / 320.0f - 1.042f) / -2.0f); /* fPiPUCAPPosition */
+    /* The fix's Rendering.ixx: rain droplets (0.75/aspect * 4/3 = 1/aspect wide, at its
+     * RainDropletsScale 0.5; game.toml patches 00722cb0 to read the slots) and the arrest
+     * blur's per-pixel step, read in place at 007231a2. */
+    put_float(0x00c2b428u, 0.5f / g_aspect);
+    put_float(0x00c2b42cu, 0.5f);
+    put_float(0x009d0584u, (1.0f / 640.0f) * ((4.0f / 3.0f) / g_aspect));
     char line[128];
     snprintf(line, sizeof line, "core.nfsc: HUD scale %.6f, centre %.1f, side offset %.1f", scale, centre,
              g_hud_offset);
@@ -500,6 +507,7 @@ PopModStatus pop_mod_init(const PopModApi *api) {
     hd_ui_install();
     intro_install();
     online_install();
+    movie_install();
     PopModStatus s = install(SETUP_PROJECTION, setup_projection, POP_HOOK_BEFORE, 0);
     if (s != POP_OK)
         return s;

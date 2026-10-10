@@ -75,6 +75,14 @@ operand_redirects = [
     { at = 0x0072b5cc, from = 0x00ab08d4, to = 0x00c2b5a0 },
     { at = 0x007309a0, from = 0x00ab08d4, to = 0x00c2b5a0 },
     { at = 0x0073121c, from = 0x00ab08d4, to = 0x00c2b5a0 },
+    # The fix's CarShadowFix (Misc.ixx): the car shadow's FADD reads the shared 120.0
+    # constant; it reads 60.0 from a slot instead.
+    { at = 0x007bea3a, from = 0x009cbb94, to = 0x00c2b424 },
+    # The fix's water reflections (Rendering.ixx): the reflection target's sizes
+    # read 768 and 320 from slots instead of the screen-derived values.
+    { at = 0x0071a9af, from = 0x00ab0acc, to = 0x00c2b430 },
+    { at = 0x0071aa20, from = 0x00a63af8, to = 0x00c2b434 },
+    { at = 0x0071aa70, from = 0x00a63af8, to = 0x00c2b434 },
 ]
 # What NFSCarbon.WidescreenFix (Frontend.ixx, FixHUD) patched in the code
 # bytes. The HUD centre (320.0) six HUD set-ups store is read from a slot
@@ -107,6 +115,41 @@ instruction_patches = [
     # screen's aspect (the fix's fPiPUCAPPosition). core.nfsc then narrows both quads.
     { at = 0x00750de6, text = "PUSH 0x3e8f5c28" },
     { at = 0x00750df4, text = "PUSH dword ptr [0x00c2b420]" },
+    # The rest of NFSCarbon.WidescreenFix's Frontend.ixx / Misc.ixx (2026-10-11):
+    # widescreen movie text placement (JZ -> JMP)
+    { at = 0x005ab6d7, text = "JMP 0x005ab715" },
+    # native widescreen movies: the two checks that fall back to the 4:3 bumper go
+    { at = 0x005bb818, text = "NOP" },
+    { at = 0x005bd4a1, text = "NOP" },
+    # EA HD: the start-up logo is EAHD_Bumper (0x9d51d8, in every v1.4 MOVIES folder)
+    # instead of EA_Bumper / EA_Bumper_WS, and the HD_GROUP name is cleared
+    { at = 0x005bb83b, text = "PUSH 0x9d51d8" },
+    { at = 0x005bd4a3, text = "PUSH 0x9d51d8" },
+    { at = 0x005bd4b0, text = "PUSH 0x9d51d8" },
+    { at = 0x00857701, text = "PUSH 0x0" },
+    # autosave icon: case 2 of the switch at 005cd133 (table 005cd4b0) runs case 1's
+    # code, as the fix's table write does (the translator compiles tables statically)
+    { at = 0x005cd170, text = "JMP 0x005cd14d" },
+    # world map cursor: the two branches that stop it at the 4:3 edge go
+    { at = 0x00570dcd, text = "NOP" },
+    { at = 0x00570ddc, text = "NOP" },
+    # the fix's CrashFix (Misc.ixx, on by default there)
+    { at = 0x0059606d, text = "NOP" },
+    { at = 0x005960a9, text = "NOP" },
+    # water reflections: the target height is 240 (the fix's n240 + NOP of the SHL)
+    { at = 0x0071a9f7, text = "MOV EDX,0xf0" },
+    { at = 0x0071a9fc, text = "NOP" },
+    # Rain droplets on the camera (the fix's RainDropletsHook / YScaleHook, 00722cb0):
+    # x = size * kx + x0 and y = size * ky + y0, kx/ky from slots core.nfsc fills
+    # (0.5 / aspect and 0.5). ECX/EDX only carried [esp+0xc] into two stores, so
+    # those stores copy it directly and the two freed instructions do the maths.
+    { at = 0x00722e7c, text = "FMUL dword ptr [0x00c2b428]" },
+    { at = 0x00722e80, text = "FADD dword ptr [ESP + 0x10]" },
+    { at = 0x00722e88, text = "MOV ECX,dword ptr [0x00ab0ba4]" },
+    { at = 0x00722e8e, text = "MOV dword ptr [ESP + 0x38],dword ptr [ESP + 0xc]" },
+    { at = 0x00722e92, text = "FLD dword ptr [0x00c2b42c]" },
+    { at = 0x00722e96, text = "FMUL dword ptr [ESP + 0x8]" },
+    { at = 0x00722ec2, text = "MOV dword ptr [ESP + 0x50],dword ptr [ESP + 0xc]" },
 ]
 # The slots' values without core.nfsc: the original constants (the aspect
 # integers are copied from the game's own at run time by core.nfsc; 3/4 here
@@ -121,6 +164,11 @@ data_seeds = [
     { addr = 0x00c2b418, float = 320.0 },  # the HUD centre
     { addr = 0x00c2b41c, float = 640.0 },  # the menu cursor's width
     { addr = 0x00c2b420, float = 0.026 },  # the picture-in-picture's x (0x3cd4fdf4)
+    { addr = 0x00c2b424, float = 60.0 },   # the car shadow's constant (CarShadowFix)
+    { addr = 0x00c2b428, float = 1.0 },    # rain droplets: x scale (core.nfsc: 0.5 / aspect)
+    { addr = 0x00c2b42c, float = 1.0 },    # rain droplets: y scale (core.nfsc: 0.5)
+    { addr = 0x00c2b430, value = 768 },    # water reflections: 768
+    { addr = 0x00c2b434, value = 320 },    # water reflections: 320
     # The original six resolutions supported (refresh rates 0 = default),
     # for a run without core.nfsc.
     { addr = 0x00c2b500, value = 1 },
