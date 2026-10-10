@@ -271,6 +271,16 @@ Explain findings plainly and keep commands copy-pasteable.
   into the guest fpu_cw (masks only, precision unchanged).
 - Keyboard key names: kit user32 ToUnicode (letters were blank on Controls) CONFIRMED.
 
+## Render resolution (2026-10-11)
+- The Metal backend draws every render target at drawable rows / game rows (rounded to 1/8), so
+  the in-game resolution never changed GPU work: 1920x1080 on the M4 Air rendered 3840x2160 + 4x
+  MSAA (GPU 14.6 ms, 47 fps in Hillsborough). RECOMP_D3D9_SCALE=1 gave a stable 60 (user test).
+  Setting core.nfsc/render_scale (0 Sharpest = follow screen, 1 Balanced = 1.5x, default,
+  2 Fastest = 1x) is read by launch.c from mod-settings.json and exported as RECOMP_D3D9_SCALE.
+- Other video options: in-game V-Sync does nothing (presenter always display-synced; F10 frame
+  limit rules); in-game Texture Filtering is overridden by F10 World filtering unless "Game's own";
+  FSAA works (game's multisample type -> 2x/4x).
+
 ## Kit changes made so far (all in kit/)
 1. Loader: aux DLLs map before the exe's IAT is bound; exe imports bind to their
    exports; statically imported DLLs get DllMain(PROCESS_ATTACH) in key order before
