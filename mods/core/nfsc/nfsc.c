@@ -30,6 +30,9 @@
  * offset with the game's FindObject/GetCenter/SetCenter, as the fix does.
  * Not ported yet: the rear-view mirror / picture-in-picture placement, FE
  * menu scaling, and loading-screen pillarboxes.
+ *
+ * CONTROLLER. The console layout, analog triggers and the controller's own
+ * button names on the Controls screen: see pad.h.
  */
 #include "pop_mod_api.h"
 #include <math.h>
@@ -70,7 +73,7 @@ POP_MOD_DECLARE_ABI();
 #define HUD_RIGHT_GROUP 0x5D0101F1u
 
 static const PopModApi *g_api;
-static uint32_t g_hooks[8];
+static uint32_t g_hooks[12];
 static int g_widescreen = 1;
 static int g_scaling = 1;
 static uint32_t g_w = 1280, g_h = 720;
@@ -104,6 +107,8 @@ static int64_t setting(const char *key, int64_t fallback) {
 static void log_line(const char *text) {
     g_api->log(g_api, text);
 }
+
+#include "pad.h" /* controller layout, analog triggers, button names */
 
 /* ---- the resolution list --------------------------------------------------
  * The host scales the game's frame by a whole number and centres it
@@ -417,6 +422,7 @@ PopModStatus pop_mod_init(const PopModApi *api) {
     if (g_scaling < 0 || g_scaling > 2)
         g_scaling = 1;
     fov_original();
+    pad_install();
     PopModStatus s = install(SETUP_PROJECTION, setup_projection, POP_HOOK_BEFORE, 0);
     if (s != POP_OK)
         return s;

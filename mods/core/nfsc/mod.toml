@@ -3,7 +3,7 @@
 # operand redirects (game.toml), because patched code bytes mean nothing to a
 # recompiled game.
 id = "core.nfsc"
-name = "Carbon widescreen"
+name = "Carbon"
 version = "0.1.0"
 api = 1
 game = "baaaaec33873d4ba7e4dbae6a5212049ffdcf9679a35d865d7625b4189952fd3"
@@ -16,3 +16,5 @@ path = "nfsc.dylib"
 [settings]
 widescreen = { type = "bool", default = true, apply = "restart", label = "Widescreen", group = "graphics", help = "Fills a wide screen instead of a 4:3 picture. Leave on. Takes effect after a restart." }
 fov_scaling = { type = "int", default = 1, min = 0, max = 2, choices = "Original|Wider|Widest", apply = "restart", label = "How much you see to the sides", group = "graphics", help = "Original: the PC game's view. Wider: a little more to the sides (default). Widest: more again. Restart to apply." }
+console_layout = { type = "bool", default = true, apply = "live", label = "Console controller layout", group = "controls", help = "Gives a controller the console layout (RT gas, LT brake, A handbrake, B nitrous, X speedbreaker, Y crew, LB look back, RB camera, right stick to shift) instead of the PC game's generic one. Your own changes in Options > Controls are kept." }
+controller_buttons = { type = "int", default = 0, min = 0, max = 3, choices = "Automatic|Xbox|PlayStation (DualSense)|Nintendo Switch Pro", apply = "live", label = "Button names", group = "controls", help = "Which controller's button names Options > Controls shows. Automatic asks macOS which controller is connected." }

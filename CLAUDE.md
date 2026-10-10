@@ -97,8 +97,18 @@ explain findings plainly, keep commands copy-pasteable.
   0x9B629D, DEADZONE ptr 0x696071, FE deadzone ptr 0x59FF6E, FENG_HIDEPCOBJ 0x583D70->
   0x583D99 (vt 0x9D0680), CFENG_RENDEROBJ_NOP 0x5B092D/flag 0x5B0929, FENG_FINDOBJECT
   0x5A0250, FENG_SETOBJECTVISIBILITY 0x570460, CFENG_INSTANCE 0xA97A78, PRESS_START hook
-  0x8577B6, DINPUT_KILL 0x6892EB, OnLoadDone 0x58E250 (profile loaded). NEXT: find the
-  binding table rows (who fills them for a joystick, cf. MW 0063cd80 restore defaults).
+  0x8577B6, DINPUT_KILL 0x6892EB, OnLoadDone 0x58E250 (profile loaded).
+  STAGE 1 CONFIRMED by the user 2026-10-10 (Switch Pro: layout, analog triggers, names, remaps) (mods/core/nfsc/pad.h): bindings = 72 rows
+  at 0xa98700 {name, triples*} (template 0xa61c88, 52-byte rows; names GAME_ACTION_GAS...);
+  triples 0/1 keyboard, 2p+2/2p+3 port p {kind, port, control}. 00689550 (thiscall port, RET 4)
+  = per-device defaults for rows 0..46 (callers: 00694c50 device create, 005c8960 Controls
+  Restore Defaults, 004b01f0 reset). REPLACE hook remembers the game's generic rows then
+  writes the console layout; per frame (REPLACE 00692240, values float[72] at [this+0x20])
+  a port whose rows == generic gets the layout (old saves, Restore Defaults); remaps kept.
+  Triggers (kind 7 control 0/1 = Rx/Ry) get full travel after the update (state +0x20c/+0x210,
+  range 0..65535). Names: REPLACE 00679ad0 (cdecl out, device, row, primary, port), family
+  from setting controller_buttons or SDL_GetGamepadTypeForID via dlsym (SDL exported by host).
+  Settings: console_layout, controller_buttons. NOT done: console FE prompts, button icons.
 - Remove online options: NOT done. Main menu state 00843690 (FeMainMenu.fng), carousel
   FeMainMenu_Sub.fng actions in 005a5560 (switch on choice 1..9; 2/3 -> 00845640 arg 1/2,
   vtable 009f82d0, maybe Online/LAN). Item labels are not bStringHash'd names found in the
