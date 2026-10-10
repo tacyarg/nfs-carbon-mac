@@ -214,12 +214,19 @@ Explain findings plainly and keep commands copy-pasteable.
   (main thread in Dev_Present) but the presenter shows nothing: a frame's GPU work never completed
   ("GPU completion timed out; retaining target until completion", right after the full-screen window
   lost and regained focus), it held one of the 3 flight slots forever, the slots filled and
-  Service::tick returned early every time. Fix (kit host/present_thread.cpp, built, not yet run): a
+  Service::tick returned early every time. Fix (kit host/present_thread.cpp; no black screen in the user's alt-tab test 2026-10-10): a
   flight with no GPU completion after 2 s cancels every flight into `retiring` (targets kept until
   their GPU work ends) and recreates the swapchain at the next tick, as installing a new layer does.
   Earlier first-launch blacks were likely the same (the move into full screen at start-up).
 - First-launch black screen: tools/dev/first_launch_capture.sh (fresh profile + cold Metal cache +
   `sample`) did NOT reproduce it in 3 launches on 2026-10-10; left as a rare known issue.
+
+## Safehouse crash (CONFIRMED fixed 2026-10-10)
+- First safehouse visit: ExitProcess(0xC0000090) via the CRT (LoadLibrary mscoree first).
+  00730840 calls _controlfp(3, 0x8001f) (unmasks invalid/zero-divide/overflow) before CreateDevice;
+  Direct3D 9 masks them again unless D3DCREATE_FPU_PRESERVE. Kit d3d9 D9_CreateDevice now ORs 0x3f
+  into the guest fpu_cw (masks only, precision unchanged).
+- Keyboard key names: kit user32 ToUnicode (letters were blank on Controls) CONFIRMED.
 
 ## Kit changes made so far (all in kit/)
 1. Loader: aux DLLs map before the exe's IAT is bound; exe imports bind to their
