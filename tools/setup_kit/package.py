@@ -23,6 +23,7 @@ Nothing here is game data: the app it writes holds YOUR copy and is not for shar
 import argparse
 import fnmatch
 import hashlib
+import json
 import plistlib
 import shutil
 import io
@@ -117,6 +118,36 @@ def sign(app):
     subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)], check=True)
 
 
+# The game's language files (LANGUAGES\\<PREFIX>_FRONTEND.BIN, table at 0xa5eac4 in NFSC.exe) and the
+# registry Language names that select them (table 0xa65588, read by 007346b0). This exe has only
+# these; Asian releases (Thai, Japanese, Korean, Chinese) shipped a different exe.
+LANGUAGES = {"ENGLISH": "English US", "FRENCH": "French", "GERMAN": "German", "ITALIAN": "Italian",
+             "SPANISH": "Spanish", "MEXICAN": "Spanish (Mexican)", "DUTCH": "Dutch", "SWEDISH": "Swedish",
+             "DANISH": "Danish", "FINNISH": "Finnish", "POLISH": "Polish", "HUNGARIAN": "Hungarian",
+             "CZECH": "Czech"}
+
+
+def game_language(game):
+    """The Language registry name for a game folder holding exactly one language's text, else None
+    (English, or several languages: the game's own default, English US, applies)."""
+    folder = next((p for p in game.iterdir() if p.name.lower() == "languages"), None)
+    if not folder:
+        return None
+    found = {p.name.upper()[:-len("_FRONTEND.BIN")] for p in folder.iterdir()
+             if p.name.upper().endswith("_FRONTEND.BIN")} & set(LANGUAGES)
+    if len(found) != 1 or found == {"ENGLISH"}:
+        return None
+    return LANGUAGES[found.pop()]
+
+
+def set_default_language(registry, language):
+    """Write Language (REG_SZ) into the first-run registry.json beside the game's other options."""
+    data = json.loads(registry.read_text())
+    key = next(iter(data))
+    data[key]["Language"] = {"type": 1, "data": language}
+    registry.write_text(json.dumps(data, indent=2) + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--game", type=Path, required=True, help="your game folder (the one with NFSC.exe)")
@@ -163,6 +194,10 @@ def main():
     (res / "Defaults").mkdir(exist_ok=True)
     for n in ("registry.json", "mod-settings.json"):
         shutil.copyfile(KIT / "defaults" / n, res / "Defaults" / n)
+    language = game_language(game)
+    if language:
+        set_default_language(res / "Defaults/registry.json", language)
+        print(f"language: {language} (the only language in your game folder)")
     for n in ("LICENSE", "NOTICE"):
         if (ROOT / n).exists():
             shutil.copyfile(ROOT / n, res / n)

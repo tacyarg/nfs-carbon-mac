@@ -281,6 +281,14 @@ Explain findings plainly and keep commands copy-pasteable.
   limit rules); in-game Texture Filtering is overridden by F10 World filtering unless "Game's own";
   FSAA works (game's multisample type -> 2x/4x).
 
+## Languages (2026-10-11)
+- Language = registry REG_SZ "Language" in the settings key (read by 007346b0, names table
+  0xa65588: 19 entries incl. Thai/Japanese/Korean/Chinese), but this exe's file table (0xa5eac4)
+  has only ENGLISH FRENCH GERMAN ITALIAN SPANISH DUTCH SWEDISH POLISH FINNISH DANISH HUNGARIAN
+  CZECH MEXICAN (LANGUAGES\\<X>_GLOBAL/FRONTEND/INGAME.BIN). Asian releases (a Reddit user's Thai
+  copy) used a different exe -> Setup rejects them. package.py game_language(): one non-English
+  language in LANGUAGES -> Defaults/registry.json gets Language (first-run profiles only).
+
 ## Kit changes made so far (all in kit/)
 1. Loader: aux DLLs map before the exe's IAT is bound; exe imports bind to their
    exports; statically imported DLLs get DllMain(PROCESS_ATTACH) in key order before
