@@ -190,11 +190,13 @@ static void pad_watch(unsigned port) {
 }
 
 /* 00692240: the per-frame input update (thiscall). */
+static void pad_keyboard_crew(void);
 static void pad_update_hook(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocation *inv, void *user) {
     (void)inv;
     (void)user;
     uint32_t self = cpu->ecx;
     int layout = (int)setting("console_layout", 1);
+    pad_keyboard_crew();
     for (unsigned p = 0; p < pad_ports(); ++p)
         if (g_pad_generic_valid[p])
             pad_watch(p);
@@ -309,6 +311,33 @@ static void pad_name_hook(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocati
 }
 
 static PopModStatus install(uint32_t addr, PopHookFn fn, int32_t mode, int slot);
+
+/* KEYBOARD CREW KEY. The PC default for Activate Crew Member (row 19,
+ * GAME_ACTION_CREWDEFENSIVE) is Right Ctrl alone, which Mac keyboards lack. Its
+ * secondary key becomes Right Option (DIK_RMENU 0xB8; the game names it Right
+ * Alt): in the defaults template (0xa61c88, 52-byte rows {name, triple x4}; a
+ * keyboard triple is {1, DIK, 0}), so Restore Defaults and new profiles get it,
+ * and in a loaded profile whose crew row is still exactly the PC default. */
+#define PAD_TEMPLATE 0x00a61c88u
+#define CREW_ROW 19u
+#define DIK_RCONTROL 0x9du
+#define DIK_RMENU 0xb8u
+static void pad_keyboard_crew(void) {
+    const uint32_t t = PAD_TEMPLATE + CREW_ROW * 52u + 4u; /* slot 0, then slot 1 at +12 */
+    if (get_u32(t) == 1u && get_u32(t + 4) == DIK_RCONTROL && get_u32(t + 12) == 0u) {
+        g_api->guest_write_u32(g_api, t + 12, 1u);
+        g_api->guest_write_u32(g_api, t + 16, DIK_RMENU);
+        g_api->guest_write_u32(g_api, t + 20, 0u);
+    }
+    const uint32_t primary = pad_triple(CREW_ROW, 0), secondary = pad_triple(CREW_ROW, 1);
+    if (primary && secondary && get_u32(primary) == 1u && get_u32(primary + 4) == DIK_RCONTROL &&
+        get_u32(secondary) == 0u) {
+        g_api->guest_write_u32(g_api, secondary, 1u);
+        g_api->guest_write_u32(g_api, secondary + 4, DIK_RMENU);
+        g_api->guest_write_u32(g_api, secondary + 8, 0u);
+        log_line("core.nfsc: Activate Crew Member also on Right Option (Mac keyboards have no Right Ctrl)");
+    }
+}
 
 static void pad_install(void) {
     if (install(PAD_SET_DEFAULTS, pad_defaults_hook, POP_HOOK_REPLACE, 7) != POP_OK ||
