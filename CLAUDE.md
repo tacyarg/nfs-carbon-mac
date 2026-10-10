@@ -175,6 +175,16 @@ Explain findings plainly and keep commands copy-pasteable.
 - .lzc files are whole-file JDLZ (header 'JDLZ' 02 10, size at +8); the game decompresses only when
   the header says so (0069eda0), so rewritten files can be stored uncompressed under the same name.
   A Python JDLZ decoder matched GLOBALB.BUN / InGameB.bun / FRONTB1.BUN byte for byte.
+- tools/setup_kit/bun.py (2026-10-10): JDLZ decoder, chunk file + TPK parse/assemble. Round trip
+  is byte-identical for FRONTB1.BUN and GLOBALA.BUN; GlobalB.lzc / InGameA.bun differ only inside
+  filler (id 0) chunks. Compressed TPKs (info has 33310003 offslots {key, offset, encoded, decoded,
+  user flags, flags, refcount, ?} instead of 33310004/5; each texture a blob with its 0x94-byte
+  header at the END; flags 0 raw, 1 one compressed block, 2 by parts (LZ magic blocks)) are NOT read
+  yet: DYNTEX.BIN, WMDYNTEX.BIN, TRACKS/L5RA/TRACKMAPS.BIN, MINI_MAP_*.BIN (+ likely NIS bundles).
+  RAWW (stored) blocks are accepted by the game (0069eda0), so a writer can avoid a real compressor.
+- Order of work: (1) whole-file copies (GLOBALA/FRONTB2 per language) + uncompressed TPKs (FRONTB1,
+  GLOBALA, INGAMEA, INGAMEB, GLOBALB) + font/cursor original-size fix in core.nfsc + Setup checkbox;
+  (2) compressed TPKs + FNG imports + NIS; (3) the optional extras (2015 minimap etc.).
 - TPK (chunk 0xB3300000): info 0xB3310000 {33310001 0x7C header (version, 0x1C collection name,
   0x40 filename, filename hash), 33310002 key+0 pairs, 33310004 texture headers (0x58 fixed, hash
   +12, class +16, data offset +20, palette offset +24, size +28, palette size +32, area +36, w/h
