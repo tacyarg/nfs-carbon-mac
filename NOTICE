@@ -1,0 +1,45 @@
+Need for Speed: Carbon is the original game represented by this project.
+Original game names, executable code, artwork, audio, tracks, cinematics and
+other data retain their original ownership and notices. Original in-game
+credits are preserved. This project is not affiliated with or endorsed by
+Electronic Arts. "Need for Speed" and "Carbon" are trademarks of Electronic
+Arts Inc.
+
+Original game files are not distributed in this repository. The app is built
+locally from the player's own copy of the game; the game's executable, data,
+artwork, audio, tracks and cinematics are still required from that copy and
+are never included. The app icon is read from the player's own NFSC.exe at
+build time; the fallback icon in tools/setup_kit/defaults is original artwork.
+
+The native host, compatibility runtime and translator are recomp-kit by
+veritr1x, included in kit/ with this port's changes, under its own LICENSE and
+NOTICE. The port's setup and much of its approach follow the Need for Speed:
+Most Wanted Mac port (github.com/elforeign/nfs-most-wanted-mac).
+
+Third-party work this port reimplements:
+
+- NFSCarbon.WidescreenFix, part of WidescreenFixesPack by ThirteenAG
+  (github.com/ThirteenAG/WidescreenFixesPack). Its resolution and field-of-view
+  changes are reimplemented in mods/core/nfsc and game.toml. Its license:
+
+  MIT License
+
+  Copyright (c) 2018 ThirteenAG
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.

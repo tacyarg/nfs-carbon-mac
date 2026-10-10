@@ -1,0 +1,18 @@
+# Carbon's widescreen view. What ThirteenAG's NFSCarbon.WidescreenFix (MIT; see
+# NOTICE) did with binary patches, done here with hooks and translate-time
+# operand redirects (game.toml), because patched code bytes mean nothing to a
+# recompiled game.
+id = "core.nfsc"
+name = "Carbon widescreen"
+version = "0.1.0"
+api = 1
+game = "baaaaec33873d4ba7e4dbae6a5212049ffdcf9679a35d865d7625b4189952fd3"
+requires = ["core.hooks >= 1.0.0"]
+affects_simulation = false
+
+[plugin]
+path = "nfsc.dylib"
+
+[settings]
+widescreen = { type = "bool", default = true, apply = "restart", label = "Widescreen", group = "graphics", help = "Fills a wide screen instead of a 4:3 picture. Leave on. Takes effect after a restart." }
+fov_scaling = { type = "int", default = 1, min = 0, max = 2, choices = "Original|Wider|Widest", apply = "restart", label = "How much you see to the sides", group = "graphics", help = "Original: the PC game's view. Wider: a little more to the sides (default). Widest: more again. Restart to apply." }
