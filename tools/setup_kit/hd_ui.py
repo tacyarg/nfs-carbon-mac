@@ -55,15 +55,33 @@ FIELDS = {
 }
 
 
-# unlock_memory (Darius Utils/MemoryUnlock.cs, MIT): the game's memory-budget files, replaced so its memory pools
-# can hold the bigger textures. FastUnlock for four, LongUnlock (a 366-byte file, zlib + base64 here) for the global one.
-FAST_UNLOCK = struct.pack("<4I", 0, 0, 0x53219999, 0)
-LONG_UNLOCK = (
-    "eNpVkF1KAzEQx9vHDeQOYxT6ZLcFq+CjioJQEUTfs+lsNzQfyyS79SbSR6/lBbyGWVOqHRhmmH/mNzMZjbLtdicv4xQ/v74/zlJ8HGd3ycuSs7KEm06b"
-    "1RtS0N5NrfdwDg/okGTEFdTkLSzlBmttcKradmjhjLOlVI12eF0kE3fz2XyxuLoURZGAT9Ii+BqUt20XkSA2MkKVxsSU6gB9HsbZbSPdGo0OcegZWOLV"
-    "bZzfukx6Rqo9KQR1eAiEkTT2abetjg1M2ou9GiZHwM5WSAk5K35RfwqcAr5Hkupwn6x8jxAS1605+/8f+7WEOC7fd8ZkaVA4+wFrum3+")
-MEMORY_FILES = ["GLOBAL/CarHeadersMemoryFile.bin", "GLOBAL/FrontEndMemoryFile.bin", "GLOBAL/InGameMemoryFile.bin",
-                "GLOBAL/PermanentMemoryFile.bin"]
+# unlock_memory: the game preloads some files from "memory files" (GLOBAL/*MemoryFile.bin: header 0, 0, 0x53219999,
+# count; then count x {name hash, offset, size, preloaded size, id}; then the data), so a rewritten file would still
+# be read from the preloaded copy. Binarius empties them (Darius MemoryUnlock), which also replaces the game's own
+# BuildVersion.moo entry with one from another build - a career saved by the player's game then came back as
+# "Start Career". Here only the entries of files this install rewrites are taken out; everything else, the build
+# stamp included, stays as shipped.
+MEMORY_FILES = ["GLOBAL/GlobalMemoryFile.bin", "GLOBAL/InGameMemoryFile.bin", "GLOBAL/CarHeadersMemoryFile.bin",
+                "GLOBAL/PermanentMemoryFile.bin", "GLOBAL/FrontEndMemoryFile.bin"]
+
+
+def without_entries(data, hashes):
+    """A memory file minus the entries whose name hash is in `hashes` (None when nothing changes)."""
+    if len(data) < 16 or struct.unpack_from("<I", data, 8)[0] != 0x53219999:
+        return None
+    count = struct.unpack_from("<I", data, 12)[0]
+    entries = [struct.unpack_from("<5I", data, 16 + 20 * i) for i in range(count)]
+    keep = [e for e in entries if e[0] not in hashes]
+    if len(keep) == len(entries):
+        return None
+    start = (16 + 20 * len(keep) + 15) & ~15
+    index, blob, offset = bytearray(), bytearray(), start
+    for h, off, size, preloaded, ident in keep:
+        chunk = data[off:off + preloaded]
+        index += struct.pack("<5I", h, offset if preloaded else start, size, preloaded, ident)
+        blob += chunk + bytes(-len(chunk) % 16)
+        offset += len(chunk) + (-len(chunk) % 16)
+    return data[:12] + struct.pack("<I", len(keep)) + index + bytes(start - 16 - len(index)) + blob
 
 
 def binhash(name):
@@ -184,6 +202,7 @@ class Installer:
         self.raw = {}        # game-relative path (upper) -> bytes, for whole-file copies
         self.skipped = {}
         self.names = {}      # game-relative path (upper) -> as the script spells it
+        self.unlock = False
 
     def path(self, rel):
         """The real (case-preserving) path of a game-relative path in the copy."""
@@ -240,15 +259,7 @@ class Installer:
         if op == "end":
             return
         if op == "unlock_memory":
-            import base64
-            import zlib
-            for rel in MEMORY_FILES:
-                if self.path(rel).exists():
-                    self.names[rel.upper()], self.raw[rel.upper()] = rel, FAST_UNLOCK
-            rel = "GLOBAL/GlobalMemoryFile.bin"
-            if self.path(rel).exists():
-                self.names[rel.upper()], self.raw[rel.upper()] = rel, zlib.decompress(base64.b64decode(LONG_UNLOCK))
-            self.log("  memory budgets unlocked")
+            self.unlock = True  # applied in write(), once the rewritten files are known
             return
         if op == "move_file":
             # move_file override relative absolute SRC DST: SRC in the mod, DST in the game
@@ -319,7 +330,20 @@ class Installer:
 
     def write(self):
         written = []
-        for key in sorted(set(self.raw) | {k for k, f in self.files.items() if getattr(f, "dirty", False)}):
+        keys = sorted(set(self.raw) | {k for k, f in self.files.items() if getattr(f, "dirty", False)})
+        if self.unlock:
+            hashes = set()
+            for key in keys:
+                rel = str(self.path(self.names.get(key, key)).relative_to(self.game)).replace("/", "\\")
+                hashes |= {binhash(rel), binhash(rel.upper()), binhash(rel.lower())}
+            for rel in MEMORY_FILES:
+                p = self.path(rel)
+                trimmed = without_entries(p.read_bytes(), hashes) if p.exists() else None
+                if trimmed is not None:
+                    self.names[rel.upper()], self.raw[rel.upper()] = rel, trimmed
+                    keys.append(rel.upper())
+                    self.log(f"  {rel}: preloaded copies of rewritten files taken out")
+        for key in keys:
             data = self.files[key].assemble() if key in self.files else self.raw[key]
             dest = self.path(self.names.get(key, key))
             tmp = dest.with_name(dest.name + ".hdui")

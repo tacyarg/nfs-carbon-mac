@@ -192,6 +192,12 @@ Explain findings plainly and keep commands copy-pasteable.
   Setup. Writes FrontB1.lzc 40 MB, GlobalB.lzc 117 MB, InGameA.bun, InGameB.lzc, GLOBALA.BUN,
   FRONTB2.BUN, 5 memory files, ~45 NIS bundles. Skipped: WMDYNTEX/DYNTEX/minimaps/TRACKMAPS
   (compressed), streamed L5RA textures, WORLDMAPMAIN import + calibration.
+- unlock_memory: Darius's version EMPTIES the memory files and writes its own BuildVersion.moo
+  (machine "D1015576"; the player's 1.4 has "D1002400"). With it the user's profile loaded but the
+  career showed "Start Career" (save intact on disk, backed up to ~/Documents/NFS Carbon save
+  backup 20261010-2043). The memory files only hold byte-identical copies of disk files (checked
+  all entries) plus that stamp, so hd_ui.py now removes ONLY the entries of files it rewrote
+  (today GlobalB.lzc, hash 4c939b36) and keeps the rest. Built 2026-10-10, career NOT yet re-tested.
 - Order of work: (1) whole-file copies (GLOBALA/FRONTB2 per language) + uncompressed TPKs (FRONTB1,
   GLOBALA, INGAMEA, INGAMEB, GLOBALB) + font/cursor original-size fix in core.nfsc + Setup checkbox;
   (2) compressed TPKs + FNG imports + NIS; (3) the optional extras (2015 minimap etc.).
