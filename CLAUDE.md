@@ -210,6 +210,14 @@ Explain findings plainly and keep commands copy-pasteable.
   the "High" list 009e8078) and saved it. Fix: kit/runtime/misc.cpp refuses RegSetValueEx through a
   handle opened without KEY_SET_VALUE (ERROR_ACCESS_DENIED), as Windows does.
 - Levels: 0 Low, 1 Medium, 2 High, 4 Maximum, 5 Custom (00ab0ae8); 007115d0 applies a level.
+- BLACK SCREEN, found 2026-10-10 19:3x (live capture + lldb on a black game): the game keeps running
+  (main thread in Dev_Present) but the presenter shows nothing: a frame's GPU work never completed
+  ("GPU completion timed out; retaining target until completion", right after the full-screen window
+  lost and regained focus), it held one of the 3 flight slots forever, the slots filled and
+  Service::tick returned early every time. Fix (kit host/present_thread.cpp, built, not yet run): a
+  flight with no GPU completion after 2 s cancels every flight into `retiring` (targets kept until
+  their GPU work ends) and recreates the swapchain at the next tick, as installing a new layer does.
+  Earlier first-launch blacks were likely the same (the move into full screen at start-up).
 - First-launch black screen: tools/dev/first_launch_capture.sh (fresh profile + cold Metal cache +
   `sample`) did NOT reproduce it in 3 launches on 2026-10-10; left as a rare known issue.
 

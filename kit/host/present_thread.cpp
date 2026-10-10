@@ -786,9 +786,15 @@ struct Service : std::enable_shared_from_this<Service> {
         f.layout.frame_id = f.frame_id;
     }
 
+    std::atomic<bool> recreate_chain{false}; // a frame was lost on the GPU (see tick)
+    int chain_w = 0, chain_h = 0;            // the swapchain's size, to recreate it
     void tick(double ts) {
         if (!std::isfinite(ts) || ts < 0)
             return;
+        if (recreate_chain.exchange(false) && device && surface && chain && !fake) {
+            device->destroy(chain);
+            chain = device->create_swapchain(surface, chain_w, chain_h);
+        }
         if (auto m = message.exchange(nullptr)) {
             if (m->install) {
                 if (device && chain) {
@@ -796,6 +802,8 @@ struct Service : std::enable_shared_from_this<Service> {
                     chain = {};
                 }
                 surface = m->surface;
+                chain_w = m->w;
+                chain_h = m->h;
                 if (device && surface && !fake)
                     chain = device->create_swapchain(surface, m->w, m->h);
                 std::lock_guard lock(mutex);
@@ -810,8 +818,11 @@ struct Service : std::enable_shared_from_this<Service> {
                     flights.clear();
                     sweep();
                 }
-            } else if (!fake && device && chain)
+            } else if (!fake && device && chain) {
+                chain_w = m->w;
+                chain_h = m->h;
                 device->resize(chain, m->w, m->h);
+            }
         }
         std::shared_ptr<Frame> f;
         HostGameRect rect{};
@@ -832,8 +843,15 @@ struct Service : std::enable_shared_from_this<Service> {
                 if ((!flights.empty() || !mailbox.empty()) &&
                     ts - std::max(window_started, last_link_tick) >= 1.0)
                     fault(2, "display link is not firing; worker is using timed fallback");
+                bool lost = false;
                 for (auto &pending : flights) {
                     completion_fallback(pending, ts);
+                    // A frame whose GPU work has not ended after 2 s is lost (seen after the
+                    // full-screen window was hidden and shown again, NFS Carbon 2026-10-10:
+                    // it held its slot forever, the slots filled, and the window stayed black
+                    // while the game ran). Recover as for a new layer, below.
+                    if (!pending->gpu && ts - pending->submitted_ts >= 2.0)
+                        lost = true;
                     if (!pending->gpu && ts - pending->submitted_ts >= 1.0) {
                         if (!(logged_faults & 16))
                             fprintf(stderr,
@@ -846,6 +864,20 @@ struct Service : std::enable_shared_from_this<Service> {
                                                         : -1.0);
                         fault(16, "GPU completion timed out; retaining target until completion");
                     }
+                }
+                if (lost) {
+                    // Cancel every presentation in flight, keeping each target until its GPU
+                    // work ends (retiring), and start a new swapchain so new frames get fresh
+                    // drawables - what installing a new layer does.
+                    fprintf(stderr, "presenter: %zu frame(s) lost on the GPU; recreating the swapchain\n",
+                            flights.size());
+                    for (auto &fl : flights) {
+                        ++drops;
+                        fl->dropped = true;
+                        retiring.push_back(fl);
+                    }
+                    flights.clear();
+                    recreate_chain = true; // outside the mutex, at the next tick
                 }
                 sweep();
             }
