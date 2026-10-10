@@ -108,7 +108,22 @@ explain findings plainly, keep commands copy-pasteable.
   Triggers (kind 7 control 0/1 = Rx/Ry) get full travel after the update (state +0x20c/+0x210,
   range 0..65535). Names: REPLACE 00679ad0 (cdecl out, device, row, primary, port), family
   from setting controller_buttons or SDL_GetGamepadTypeForID via dlsym (SDL exported by host).
-  Settings: console_layout, controller_buttons. NOT done: console FE prompts, button icons.
+  Settings: console_layout, controller_buttons.
+  STAGE 2 console menu prompts (fe_pad.h) CONFIRMED working by the user 2026-10-10 (needed
+  00583d70 in entry_points: hooks need a listed function). Career map overlap fix (groups
+  0x17b1f254 console / 0xa2601d59 PC via FindObject on [0xa977f0]+0xc, only while the map or
+  FeWorldMapQuickList.fng is in control (00572350); quick list focus hooks 005cdbf0/005c3880;
+  "Free Roam" -> Back in the FE) CONFIRMED 2026-10-10. Details:
+  REPLACE 00583d70 (load-time hide of console objects, arg obj, RET 4), REPLACE 005b0920
+  (render object; its TEST 0x40/JNZ at 005b092d NOP'd in game.toml), BEFORE 00600c90
+  cFEng::Service walks menus ([this+0xe0] next +4; objects +0x4c next +4; group children +0x64)
+  hiding PC (0x1008) or console (0x40) set, mark in UserParam +0x28 bit 0x01000000. Console
+  set after pad input, PC after key/click. Icons: console images use PS2 names (CROSS...) not
+  in the PC data -> retargeted to XBONE_/PS4_/SWITCH_ names in GLOBAL/XtendedInputButtons.tpk,
+  loaded via 006b32c0/006b5910/006b68d0. No pack -> keyboard prompts stay. package.py
+  --button-icons downloads XtendedInput 1.22 Release-Carbon-Pack.zip (sha256 pinned, cached in
+  ~/Library/Caches/NFS Carbon Setup). Setting console_prompts. Offline fallback (our own TPK) TODO.
+  F10 page: game.toml [settings] page = "tabs" (choice names; Controls tab), touch rows removed.
 - Remove online options: NOT done. Main menu state 00843690 (FeMainMenu.fng), carousel
   FeMainMenu_Sub.fng actions in 005a5560 (switch on choice 1..9; 2/3 -> 00845640 arg 1/2,
   vtable 009f82d0, maybe Online/LAN). Item labels are not bStringHash'd names found in the

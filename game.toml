@@ -40,7 +40,8 @@ volatile_reads = []
 # career / Audio options, run 2026-10-10 02:41.
 entry_points = [0x004c5450, 0x0089122d, 0x0089f604, 0x0089f07c, 0x0089f494, 0x008999ee,
                 0x0054bac0, 0x0088510e, 0x00884a1d, 0x0059d6d0, 0x0089777e, 0x008ab884,
-                0x00555450, 0x005507a0, 0x005a69b0]
+                0x00555450, 0x005507a0, 0x005a69b0,
+                0x00583d70]  # FEng object callback (vtable 009d0680) core.nfsc hooks
 
 # Widescreen field of view (core.nfsc fills these per view on entry to the
 # projection setup 0071b780; see mods/core/nfsc/nfsc.c). ThirteenAG's
@@ -90,6 +91,11 @@ instruction_patches = [
     { at = 0x007115f0, text = "NOP" },
     { at = 0x007116df, text = "NOP" },
     { at = 0x00711d3f, text = "PUSH 0xc2b640" },
+    # Console button prompts (XtendedInput's CFENG_RENDEROBJ_NOP): the object
+    # renderer 005b0920 no longer skips every console-flagged (0x40) object;
+    # core.nfsc's hook on it skips whichever prompt set is not in use, and
+    # without core.nfsc the game's load-time hiding (00583d70) still hides them.
+    { at = 0x005b092d, text = "NOP" },
 ]
 # The slots' values without core.nfsc: the original constants (the aspect
 # integers are copied from the game's own at run time by core.nfsc; 3/4 here
@@ -183,7 +189,11 @@ exclude = ["Uninstall", "Support", "scripts", "SAVE", "*.dll", "*.asi", "*.txt"]
 # The settings page (F10): Window = Windowed / Borderless / Full screen, plus
 # the mods' own settings. The other rows are Populous's and stay off, as in
 # the MW port.
-rows = ["window", "frame_limit", "performance_overlay", "filtering", "controls"]
+rows = ["window", "frame_limit", "performance_overlay", "filtering"]
+# The tabbed page (Graphics / Mods / Controls), as the MW port: it shows the
+# mods' choices by name. The kit's "controls" rows are the iPad/iPhone touch
+# controls and stay off on the Mac; the controller settings are core.nfsc's.
+page = "tabs"
 # A 3D game: fill the screen at any resolution (the kit's default "integer"
 # scales by whole multiples only, so most sizes left black borders).
 scaling = "smooth"

@@ -32,7 +32,8 @@
  * menu scaling, and loading-screen pillarboxes.
  *
  * CONTROLLER. The console layout, analog triggers and the controller's own
- * button names on the Controls screen: see pad.h.
+ * button names on the Controls screen: see pad.h. Console prompts in the
+ * menus with the controller's icons: see fe_pad.h.
  */
 #include "pop_mod_api.h"
 #include <math.h>
@@ -73,7 +74,7 @@ POP_MOD_DECLARE_ABI();
 #define HUD_RIGHT_GROUP 0x5D0101F1u
 
 static const PopModApi *g_api;
-static uint32_t g_hooks[12];
+static uint32_t g_hooks[16];
 static int g_widescreen = 1;
 static int g_scaling = 1;
 static uint32_t g_w = 1280, g_h = 720;
@@ -109,6 +110,7 @@ static void log_line(const char *text) {
 }
 
 #include "pad.h" /* controller layout, analog triggers, button names */
+#include "fe_pad.h" /* console button prompts in the menus */
 
 /* ---- the resolution list --------------------------------------------------
  * The host scales the frame smoothly to the window, aspect kept (game.toml
@@ -461,6 +463,7 @@ PopModStatus pop_mod_init(const PopModApi *api) {
         g_scaling = 1;
     fov_original();
     pad_install();
+    fe_pad_install(api);
     PopModStatus s = install(SETUP_PROJECTION, setup_projection, POP_HOOK_BEFORE, 0);
     if (s != POP_OK)
         return s;

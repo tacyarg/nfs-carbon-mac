@@ -11,6 +11,10 @@ Takes build/CarbonRecomp.app (run tools/build.py first) and adds:
                                   msvcr71/msvcp71 DLLs the translation was made from
   Contents/Resources/Defaults/    first-run registry.json and mod-settings.json
   Contents/Resources/AppIcon.icns tools/setup_kit/defaults/AppIcon.icns
+  Contents/Resources/Game/GLOBAL/XtendedInputButtons.tpk
+                                  only with --button-icons: controller button icons from
+                                  XtendedInput's release (xan1242; art by Aero_), downloaded
+                                  from GitHub and checked; not part of this repository
 Info.plist gets the app's name, the racing-games category and LSSupportsGameMode, so macOS
 turns on Game Mode in full screen. Every Mach-O is signed ad hoc, inside out.
 
@@ -21,8 +25,11 @@ import fnmatch
 import hashlib
 import plistlib
 import shutil
+import io
 import subprocess
 import sys
+import urllib.request
+import zipfile
 try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
@@ -37,6 +44,12 @@ VERSION = "0.1.0"
 MAGIC = {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"}
 # Beyond game.toml's [bundle] exclude: the installer and online-only leftovers.
 EXTRA_EXCLUDE = ["setup.exe", "server.cfg", "autorun.inf", "*.ico"]
+# Controller button icons: XtendedInput 1.22's Carbon pack (only its icon file is used).
+ICONS_URL = "https://github.com/xan1242/NFS-XtendedInput/releases/download/1.22/Release-Carbon-Pack.zip"
+ICONS_ZIP_SHA256 = "86c019cd79a1625c4061d5c7b1bd42cca5350c2d2271f8257ec612e752804001"
+ICONS_MEMBER = "GLOBAL/XtendedInputButtons.tpk"
+ICONS_SHA256 = "8a2c6e4e131ceb66767677d8ff0425a5d10e3e656c4efaf06231c58482b05990"
+ICONS_CACHE = Path.home() / "Library/Caches/NFS Carbon Setup/XtendedInputButtons.tpk"
 
 
 def sha256(p):
@@ -45,6 +58,28 @@ def sha256(p):
         for block in iter(lambda: f.read(1 << 20), b""):
             h.update(block)
     return h.hexdigest()
+
+
+def button_icons():
+    """The icon file: from the cache, else downloaded and checked. None when offline."""
+    if ICONS_CACHE.exists() and sha256(ICONS_CACHE) == ICONS_SHA256:
+        return ICONS_CACHE
+    try:
+        with urllib.request.urlopen(ICONS_URL, timeout=60) as r:
+            data = r.read()
+    except OSError as e:
+        print(f"button icons: download failed ({e}); menus keep keyboard prompts")
+        return None
+    if hashlib.sha256(data).hexdigest() != ICONS_ZIP_SHA256:
+        print("button icons: the download is not the expected file; skipped")
+        return None
+    tpk = zipfile.ZipFile(io.BytesIO(data)).read(ICONS_MEMBER)
+    if hashlib.sha256(tpk).hexdigest() != ICONS_SHA256:
+        print("button icons: unexpected icon file in the download; skipped")
+        return None
+    ICONS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    ICONS_CACHE.write_bytes(tpk)
+    return ICONS_CACHE
 
 
 def is_macho(p):
@@ -87,6 +122,8 @@ def main():
     ap.add_argument("--game", type=Path, required=True, help="your game folder (the one with NFSC.exe)")
     ap.add_argument("--out", type=Path, default=ROOT / "dist", help="where to write the app (default dist/)")
     ap.add_argument("--install", action="store_true", help="also copy the app to /Applications")
+    ap.add_argument("--button-icons", action="store_true",
+                    help="download XtendedInput's controller button icons (about 1.5 MB) for the menus")
     ap.add_argument("--icon", type=Path, help="a picture to use as the app icon (default: the game's own icon)")
     a = ap.parse_args()
 
@@ -134,6 +171,12 @@ def main():
     shutil.copyfile(exe, res / "Game/NFSC.exe")
     for name, p in aux:
         shutil.copyfile(p, res / "Game" / name)
+    if a.button_icons:
+        icons = button_icons()
+        if icons:
+            (res / "Game/GLOBAL").mkdir(exist_ok=True)
+            shutil.copyfile(icons, res / "Game" / ICONS_MEMBER)
+            print("button icons: added")
 
     info = tmp / "Contents/Info.plist"
     plist = plistlib.loads(info.read_bytes())

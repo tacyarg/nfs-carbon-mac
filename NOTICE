@@ -43,3 +43,13 @@ Third-party work this port reimplements:
   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
+
+- NFS-XtendedInput by Lovro Plese (Xan/Tenjoin) and Berkay Yigit
+  (github.com/xan1242/NFS-XtendedInput). Its Carbon controller layout and
+  console button prompts are reimplemented in mods/core/nfsc (pad.h,
+  fe_pad.h). MIT License, Copyright (c) 2022-2023 Lovro Plese (Xan/Tenjoin),
+  Copyright (c) 2023 Berkay Yigit; the license text is as above for
+  ThirteenAG's work, with these names.
+  Its controller button icons (XtendedInputButtons.tpk, art by Aero_) are not
+  included in this repository: the setup optionally downloads them from
+  XtendedInput's GitHub release onto the player's Mac.
