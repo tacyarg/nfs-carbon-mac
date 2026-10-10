@@ -14,7 +14,7 @@
 #define SKIP_MOVIES_FLAG 0x00a9e6d8u
 #define QUEUED_MOVIE 0x00a97a88u /* char[64] */
 
-static int g_skip_intro = 1;
+static int g_skip_intro = 0;
 
 static int intro_movie(const char *name) {
     static const char *const intro[] = {"EA_Bumper", "EA_Bumper_WS", "PSA_Nikki", "EAHD_Bumper"};
@@ -45,7 +45,7 @@ static void intro_service(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocati
 }
 
 static void intro_install(void) {
-    g_skip_intro = setting("skip_intro", 1) != 0;
+    g_skip_intro = setting("skip_intro", 0) != 0;
     if (g_skip_intro && install(0x00600c90u, intro_service, POP_HOOK_BEFORE, 17) != POP_OK)
         log_line("core.nfsc: intro skipping unavailable");
 }
