@@ -183,6 +183,11 @@ explain findings plainly, keep commands copy-pasteable.
 12. Translator (`carbon-kit-module-redirects.patch`): configure_module() clears the exe's
    operand_redirects / instruction_patches / data_seeds, so an aux DLL translation no
    longer fails with "operand redirects matched nothing".
+16. Presenter (git 0b704cd): game.toml `[settings] scaling = "smooth"` (kit default
+   "integer") makes the compositor's whole-frame rect and host_present_fit take the
+   fractional aspect-preserving scale, so any game resolution fills the screen. Carbon
+   sets it. Built 2026-10-10, no visible change yet (the menu list is still screen/k);
+   groundwork for a full resolution list + Display Mode (windowed/borderless/full).
 
 ## Where we are
 - All three images translate (exe 49947/49970 functions) and the app builds:
