@@ -125,6 +125,9 @@ Explain findings plainly and keep commands copy-pasteable.
   loaded via 006b32c0/006b5910/006b68d0. No pack -> keyboard prompts stay. package.py
   --button-icons downloads XtendedInput 1.22 Release-Carbon-Pack.zip (sha256 pinned, cached in
   ~/Library/Caches/NFS Carbon Setup). Setting console_prompts. Offline fallback (our own TPK) TODO.
+  Icons swapped only in controller mode (shared images, e.g. map filter bar, keep the PC
+  image otherwise). Menu cursor: redirect 00731665 FMUL 640.0 -> slot 0xc2b41c = 2*centre
+  (480*aspect); fixed the right-side wall (CONFIRMED 2026-10-10).
   F10 page: game.toml [settings] page = "tabs" (choice names; Controls tab), touch rows removed.
 - Remove online options: NOT done. Main menu state 00843690 (FeMainMenu.fng), carousel
   FeMainMenu_Sub.fng actions in 005a5560 (switch on choice 1..9; 2/3 -> 00845640 arg 1/2,

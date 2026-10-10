@@ -58,6 +58,7 @@ POP_MOD_DECLARE_ABI();
 #define SLOT_FOV_V 0x00c2b410u      /* float, FDIVR at 0071b923 (1.0) */
 #define SLOT_HUD_OFFSET 0x00c2b414u /* float, the minimap's widescreen offset (120.0) */
 #define SLOT_HUD_CENTRE 0x00c2b418u /* float, six HUD set-ups' 320.0 */
+#define SLOT_CURSOR_WIDTH 0x00c2b41cu /* float, the menu cursor's 640.0 (FMUL at 00731665) */
 
 /* HUD floats the code reads in place (the fix's ProtectedGameRefs). */
 #define HUD_SCALE_X 0x009e8f8cu
@@ -252,6 +253,7 @@ static void apply_hud(void) {
     put_float(HUD_FE_X, centre);
     put_float(HUD_RACE_ROUTE_X, centre - 320.0f + 384.0f);
     put_float(SLOT_HUD_CENTRE, centre);
+    put_float(SLOT_CURSOR_WIDTH, 2.0f * centre); /* the menu spans 0 .. 2 * centre */
     g_hud_offset = 240.0f * g_aspect - 320.0f; /* -CalculateWidescreenOffset(w, h, 640, 480) */
     put_float(SLOT_HUD_OFFSET, g_hud_offset);
     char line[128];

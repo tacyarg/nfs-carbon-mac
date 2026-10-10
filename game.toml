@@ -57,6 +57,10 @@ operand_redirects = [
     # by 120.0; core.nfsc puts 240 * aspect - 320 in the slot.
     { at = 0x005d52f9, from = 0x009cbb94, to = 0x00c2b414 },  # FSUB 120.0
     { at = 0x005d5356, from = 0x009cbb94, to = 0x00c2b414 },  # FADD 120.0
+    # Menu mouse cursor (00731580): window x * 640.0 / width; core.nfsc puts
+    # the widescreen menu's width (480 * aspect) in the slot, or the cursor
+    # stops at x = 640 with menu still to its right.
+    { at = 0x00731665, from = 0x009e9b68, to = 0x00c2b41c },  # FMUL 640.0
     # Resolution list (the fix's Resolution.ixx): the option's "supported" and
     # refresh-rate tables (6 entries at 00ab0658 / 00ab08d4) are read from
     # 40-entry tables core.nfsc fills. The unlisted readers 00712b85/00712c65
@@ -108,6 +112,7 @@ data_seeds = [
     { addr = 0x00c2b410, float = 1.0 },
     { addr = 0x00c2b414, float = 120.0 },  # the minimap's widescreen offset
     { addr = 0x00c2b418, float = 320.0 },  # the HUD centre
+    { addr = 0x00c2b41c, float = 640.0 },  # the menu cursor's width
     # The original six resolutions supported (refresh rates 0 = default),
     # for a run without core.nfsc.
     { addr = 0x00c2b500, value = 1 },

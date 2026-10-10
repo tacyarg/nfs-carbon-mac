@@ -115,13 +115,16 @@ static int fe_excluded(uint32_t flags) {
     return (flags & (fe_console() ? FE_FLAG_PC : FE_FLAG_CONSOLE)) != 0;
 }
 
-/* An image showing a console prompt: the current controller's icon. */
+/* An image showing a console prompt: the current controller's icon while the
+ * controller is in use, the game's own image otherwise (some of these images
+ * sit in parts of a menu both prompt sets share, e.g. the career map's race
+ * filter bar, where the PC game shows no button). */
 static void fe_icon(uint32_t object, int family) {
     uint32_t tex = get_u32(object + 0x24);
     for (unsigned i = 0; i < FE_ICON_COUNT; ++i)
         for (unsigned k = 0; k < 4; ++k)
             if (tex == g_fe_icon_hash[i][k]) {
-                uint32_t want = g_fe_icon_hash[i][1 + family];
+                uint32_t want = fe_console() ? g_fe_icon_hash[i][1 + family] : g_fe_icon_hash[i][0];
                 if (tex != want) {
                     g_api->guest_write_u32(g_api, object + 0x24, want);
                     g_api->guest_write_u32(g_api, object + 0x1c, get_u32(object + 0x1c) | 0x400000u);
