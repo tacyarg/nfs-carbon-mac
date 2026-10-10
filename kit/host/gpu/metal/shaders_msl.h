@@ -9,7 +9,7 @@ namespace gpu::metal {
 inline const char *const kCompositorSource = R"MSL(
 #include <metal_stdlib>
 using namespace metal;
-struct Quad { float4 rect; float4 uv; float2 drawable; uint opaque; uint pad; };
+struct Quad { float4 rect; float4 uv; float2 drawable; uint opaque; uint pad; float4 gamma[17]; };
 struct Varying { float4 position [[position]]; float2 uv; };
 vertex Varying compositor_vertex(uint id [[vertex_id]], constant Quad& q [[buffer(0)]]) {
     const float2 corners[4]={float2(0,0),float2(1,0),float2(0,1),float2(1,1)};
@@ -25,6 +25,14 @@ fragment float4 compositor_fragment(Varying v [[stage_in]],
     constexpr sampler nearest(coord::normalized,address::clamp_to_edge,filter::nearest);
     float4 c=tex.sample(nearest,v.uv);
     if(q.opaque) c.a=1;
+    if(q.pad==1) { // the game's gamma ramp (SetGammaRamp), piecewise linear over 17 samples
+        const float3 x=saturate(c.rgb)*16.0;
+        const uint3 i=min(uint3(x),uint3(15));
+        const float3 f=x-float3(i);
+        c.r=mix(q.gamma[i.r].r,q.gamma[i.r+1].r,f.r);
+        c.g=mix(q.gamma[i.g].g,q.gamma[i.g+1].g,f.g);
+        c.b=mix(q.gamma[i.b].b,q.gamma[i.b+1].b,f.b);
+    }
     return c;
 }
 // Test86 HDR output (RGBA16F linear extended sRGB drawable, 1.0 = SDR white). mode 0: decode the sRGB

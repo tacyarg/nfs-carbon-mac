@@ -18,6 +18,8 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <memory>
@@ -163,10 +165,19 @@ std::vector<const UiElement *> ordered(const UiFrame *ui) {
 }
 
 enum Blend { Opaque, Straight, Premultiplied };
+
+// IDirect3DDevice9::SetGammaRamp (the game's brightness): 17 samples of each channel's 256-entry
+// ramp, applied in the compositor to the game's own frame (not the settings page or overlays).
+// Neutral (the identity ramp) skips it. Set on a guest thread, read by the presenter.
+constexpr int kGammaPoints = 17;
+std::mutex gamma_mutex;
+bool gamma_active = false;
+float gamma_table[kGammaPoints][4];
 struct Quad {
     float rect[4], uv[4];
     float drawable[2];
-    uint32_t opaque, pad;
+    uint32_t opaque, pad; // pad (Metal): 1 = apply the game's gamma ramp below
+    float gamma[kGammaPoints][4]; // the ramp at x = i / 16, per channel; read only when pad is 1
 };
 // One pipeline per blend convention and target format; the device caches by
 // the render state, so asking every compose is free.
@@ -191,7 +202,7 @@ struct Pass {
 // Encode a textured compositor quad with explicit destination, UVs and alpha convention.
 // Reject empty or wholly offscreen rectangles before issuing draw commands.
 void draw(Pass &pass, const CompositorInput &in, gpu::Texture tex, CompositeRect dst,
-          CompositeRect uv, Blend blend, int hdr_mode = 0) {
+          CompositeRect uv, Blend blend, int hdr_mode = 0, bool game = true) {
     if (!tex || dst.w <= 0 || dst.h <= 0 || dst.x >= in.drawable_w || dst.y >= in.drawable_h ||
         dst.x + dst.w <= 0 || dst.y + dst.h <= 0)
         return;
@@ -202,7 +213,15 @@ void draw(Pass &pass, const CompositorInput &in, gpu::Texture tex, CompositeRect
            {float(uv.x), float(uv.y), float(uv.w), float(uv.h)},
            {float(in.drawable_w), float(in.drawable_h)},
            uint32_t(blend == Opaque),
-           0};
+           0,
+           {}};
+    if (game) {
+        std::lock_guard lock(gamma_mutex);
+        if (gamma_active) {
+            q.pad = 1;
+            memcpy(q.gamma, gamma_table, sizeof q.gamma);
+        }
+    }
     pass.device->set_pipeline(pass.cb, p);
     pass.device->set_bytes(pass.cb, gpu::Stage::Vertex, 0, &q, sizeof q);
     pass.device->set_bytes(pass.cb, gpu::Stage::Fragment, 0, &q, sizeof q);
@@ -382,7 +401,7 @@ void compositor_compose(gpu::Device *device, const CompositorInput *in, gpu::Tex
         draw(pass, *in, in->legacy_frame, pixel_rect(whole_rect(*in, false)), full_uv, Opaque,
              in->hdr_linear ? 2 : in->hdr_scene ? 1 : 0);
         if (in->settings_page)
-            draw(pass, *in, in->settings_page, drawn_settings_page_rect(*in), full_uv, Straight);
+            draw(pass, *in, in->settings_page, drawn_settings_page_rect(*in), full_uv, Straight, 0, false);
         finish();
         return;
     }
@@ -431,7 +450,7 @@ void compositor_compose(gpu::Device *device, const CompositorInput *in, gpu::Tex
         }
     }
     if (in->settings_page)
-        draw(pass, *in, in->settings_page, drawn_settings_page_rect(*in), full_uv, Straight);
+        draw(pass, *in, in->settings_page, drawn_settings_page_rect(*in), full_uv, Straight, 0, false);
     finish();
 }
 
@@ -522,4 +541,23 @@ LayoutSnapshot compositor_resize_layout(const LayoutSnapshot &layout, int w, int
     auto result = compositor_layout_snapshot(&in);
     result.frame_id = layout.frame_id;
     return result;
+}
+
+extern "C" void host_set_gamma_ramp(const uint16_t *ramp) {
+    std::lock_guard lock(gamma_mutex);
+    if (!ramp) {
+        gamma_active = false;
+        return;
+    }
+    bool identity = true;
+    for (int ch = 0; ch < 3; ++ch)
+        for (int i = 0; i < 256; ++i)
+            identity &= std::abs(int(ramp[ch * 256 + i]) - i * 257) <= 257;
+    for (int i = 0; i < kGammaPoints; ++i) {
+        const int at = std::min(255, i * 16);
+        for (int ch = 0; ch < 3; ++ch)
+            gamma_table[i][ch] = ramp[ch * 256 + at] / 65535.0f;
+        gamma_table[i][3] = 0;
+    }
+    gamma_active = !identity;
 }

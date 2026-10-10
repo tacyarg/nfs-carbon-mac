@@ -157,7 +157,7 @@ Explain findings plainly and keep commands copy-pasteable.
 - setup.py pins NFSC.exe (game.toml sha256) and the stock msvcr71/msvcp71 hashes (game.toml's
   addresses inside them are for those exact files).
 
-## Detail level / FirstTime (kit change 17, built 2026-10-10, not yet confirmed)
+## Detail level / FirstTime (kit change 17, CONFIRMED fixed by the user 2026-10-10)
 - Bug: Level of Detail Maximum came back as High after a restart. Diag hooks showed: 007346b0 opens
   HKLM\...\Need for Speed Carbon with KEY_READ (0x20019) and writes FirstTime = 1 through it
   (refused on Windows); the kit stored it, so 00711810 loaded FirstTime = 1 and 00729d10 re-ran the
@@ -215,6 +215,12 @@ Explain findings plainly and keep commands copy-pasteable.
    scale -> colour key -> encode (simple bounding-box DXT encoder). Source is the
    surface's CPU copy. Callers: 007d7580 (texture copy when formats differ),
    00759040 (per mip), 00732ca0 (boot).
+18. Brightness (git, 2026-10-10, built, NOT yet run): Dev_SetGammaRamp/GetGammaRamp store the
+   D3DGAMMARAMP and call host_set_gamma_ramp (dx/host_api.h, weak no-op default); host/compositor.cpp
+   keeps 17 samples per channel and the Metal compositor_fragment applies them (Quad.pad = 1, Quad
+   grew a float4 gamma[17]) to every draw except the settings page. Identity ramp = off. Metal only:
+   Vulkan/WebGPU shaders read the old Quad prefix and ignore it. compositor_tests: 24 failures are
+   from scaling = "smooth" (tests expect integer rects), the same with and without this change.
 17. Registry (git, 2026-10-10): writes through a read-only key handle fail with ERROR_ACCESS_DENIED
    (see "Detail level / FirstTime").
 15. Translator (`carbon-kit-indexed-redirects.patch`): operand_redirects also match an

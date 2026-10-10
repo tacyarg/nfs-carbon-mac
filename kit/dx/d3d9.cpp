@@ -379,8 +379,29 @@ D9_STUB(CreateAdditionalSwapChain, 3)
 D9_STUB(GetSwapChain, 3)
 D9_STUB(GetRasterStatus, 3)
 D9_STUB(SetDialogBoxMode, 2)
-D9_STUB(SetGammaRamp, 4)
-D9_STUB(GetGammaRamp, 3)
+// The game's brightness (Carbon's Brightness slider): SetGammaRamp(swapchain, flags,
+// D3DGAMMARAMP *), 3 x 256 WORDs. Kept for GetGammaRamp; the presenter applies it.
+uint16_t g_gamma_ramp[768];
+bool g_gamma_set = false;
+void Dev_SetGammaRamp(X86 *c) {
+    const uint32_t ramp = arg(c, 3);
+    if (ramp && gm_valid(ramp, sizeof g_gamma_ramp)) {
+        memcpy(g_gamma_ramp, gm_ptr(ramp), sizeof g_gamma_ramp);
+        g_gamma_set = true;
+        host_set_gamma_ramp(g_gamma_ramp);
+    }
+    com_ret(c, D3D_OK9);
+}
+void Dev_GetGammaRamp(X86 *c) {
+    const uint32_t ramp = arg(c, 2);
+    if (ramp && gm_valid(ramp, sizeof g_gamma_ramp)) {
+        if (!g_gamma_set)
+            for (int i = 0; i < 768; ++i)
+                g_gamma_ramp[i] = uint16_t((i % 256) * 257);
+        memcpy(gm_ptr(ramp), g_gamma_ramp, sizeof g_gamma_ramp);
+    }
+    com_ret(c, D3D_OK9);
+}
 void Dev_CreateVolumeTexture(X86 *c);
 D9_STUB(UpdateSurface, 5)
 void Dev_UpdateTexture(X86 *c);

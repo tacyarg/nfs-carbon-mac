@@ -15,6 +15,8 @@
 
 extern "C" {
 
+HOST_DEFAULT void host_set_gamma_ramp(const uint16_t *) {}
+
 // Shutdown remains reachable even with RECOMP_NULL_HOST: only graphical and
 // audible callbacks are pinned to no-ops in that build.
 __attribute__((weak)) int host_close_requested(void) {

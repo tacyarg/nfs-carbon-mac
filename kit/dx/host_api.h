@@ -128,6 +128,9 @@ void host_d3d_set_render_target(const HostD3DSurface *target);
 // writing, because every pixel pointer it was given names memory that is not
 // there any more. This is the one case where losing a scene is correct.
 void host_d3d_discard(void);
+// IDirect3DDevice9::SetGammaRamp: D3DGAMMARAMP's 3 x 256 16-bit entries (red, green, blue), or
+// null to reset. The presenter applies it to the game's frame (host/compositor.cpp).
+void host_set_gamma_ramp(const uint16_t *ramp);
 
 // The guest is about to read or write `surface` with the CPU, or present it.
 // If it is the device's render target and the device has drawn into it since
