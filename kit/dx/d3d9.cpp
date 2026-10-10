@@ -312,6 +312,16 @@ void D9_CreateDevice(X86 *c) {
         return;
     }
     com_out_ptr(out, 0);
+    // Direct3D 9 resets the calling thread's FPU at device creation unless the
+    // behaviour flags (arg 4) hold D3DCREATE_FPU_PRESERVE (2): it masks every
+    // floating-point exception (and selects single precision). NFS Carbon
+    // unmasks invalid/zero-divide/overflow with _controlfp(3, 0x8001f) just
+    // before its CreateDevice and relies on this reset; left unmasked, a CRT
+    // maths call with an invalid argument raised STATUS_FLOAT_INVALID_OPERATION
+    // and the CRT ended the game (first safehouse visit, 2026-10-10). Only the
+    // masks are reset here; precision stays as the guest set it.
+    if (!(arg(c, 4) & 2u))
+        c->fpu_cw = uint16_t(c->fpu_cw | 0x3fu);
     ComObj *dev = com_new(K_D3D9DEVICE);
     if (!dev) {
         com_ret(c, E_OUTOFMEMORY);
