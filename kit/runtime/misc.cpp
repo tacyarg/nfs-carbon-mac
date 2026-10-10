@@ -369,6 +369,14 @@ std::map<uint32_t, std::string> &regkeys() {
     static std::map<uint32_t, std::string> m;
     return m;
 }
+// Handles opened without KEY_SET_VALUE: Windows refuses writes through them with
+// ERROR_ACCESS_DENIED. NFS Carbon writes FirstTime = 1 through a read-only handle at
+// every start (007346b0); honouring the write made every launch a first launch, which
+// re-ran the hardware detection and reset the detail level.
+std::set<uint32_t> &regreadonly() {
+    static std::set<uint32_t> m;
+    return m;
+}
 uint32_t g_next_hkey = 0x00030004;
 bool g_registry_dirty = false;
 
@@ -564,7 +572,8 @@ namespace {
 // -------------------------------------------------------------------------
 // ADVAPI32
 // -------------------------------------------------------------------------
-void a_RegOpenKeyEx(X86 *c, uint32_t hkey, const std::string &sub, uint32_t presult) {
+void a_RegOpenKeyEx(X86 *c, uint32_t hkey, const std::string &sub, uint32_t presult,
+                    uint32_t sam = 0xf003f /* KEY_ALL_ACCESS */) {
     std::string path = key_path(hkey, sub);
     if (path.empty()) {
         set_eax(c, 6);
@@ -586,6 +595,8 @@ void a_RegOpenKeyEx(X86 *c, uint32_t hkey, const std::string &sub, uint32_t pres
     uint32_t h = g_next_hkey;
     g_next_hkey += 4;
     regkeys()[h] = path;
+    if (!(sam & 0x2)) // KEY_SET_VALUE
+        regreadonly().insert(h);
     if (presult)
         wr32(presult, h);
     set_eax(c, 0);
@@ -595,7 +606,7 @@ void a_RegOpenKeyA(X86 *c) {
     a_RegOpenKeyEx(c, arg(c, 0), gm_str(arg(c, 1), 512), arg(c, 2));
 }
 void a_RegOpenKeyExA(X86 *c) {
-    a_RegOpenKeyEx(c, arg(c, 0), gm_str(arg(c, 1), 512), arg(c, 4));
+    a_RegOpenKeyEx(c, arg(c, 0), gm_str(arg(c, 1), 512), arg(c, 4), arg(c, 3));
 }
 
 void reg_create(X86 *c, const std::string &sub) {
@@ -644,6 +655,7 @@ void a_RegCreateKeyA(X86 *c) {
 
 void a_RegCloseKey(X86 *c) {
     regkeys().erase(arg(c, 0));
+    regreadonly().erase(arg(c, 0));
     registry_flush();
     set_eax(c, 0);
 }
@@ -725,6 +737,10 @@ void reg_set(X86 *c, const std::string &name, bool wide) {
         set_eax(c, 6);
         return;
     }
+    if (regreadonly().count(hkey)) {
+        set_eax(c, 5); // ERROR_ACCESS_DENIED
+        return;
+    }
 
     RegValue rv;
     rv.type = type;
@@ -746,7 +762,7 @@ void reg_set(X86 *c, const std::string &name, bool wide) {
 }
 
 void a_RegOpenKeyExW(X86 *c) {
-    a_RegOpenKeyEx(c, arg(c, 0), gm_wstr(arg(c, 1)), arg(c, 4));
+    a_RegOpenKeyEx(c, arg(c, 0), gm_wstr(arg(c, 1)), arg(c, 4), arg(c, 3));
 }
 void a_RegCreateKeyExA(X86 *c) {
     reg_create(c, gm_str(arg(c, 1), 512));

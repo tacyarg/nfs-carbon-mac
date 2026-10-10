@@ -157,6 +157,17 @@ Explain findings plainly and keep commands copy-pasteable.
 - setup.py pins NFSC.exe (game.toml sha256) and the stock msvcr71/msvcp71 hashes (game.toml's
   addresses inside them are for those exact files).
 
+## Detail level / FirstTime (kit change 17, built 2026-10-10, not yet confirmed)
+- Bug: Level of Detail Maximum came back as High after a restart. Diag hooks showed: 007346b0 opens
+  HKLM\...\Need for Speed Carbon with KEY_READ (0x20019) and writes FirstTime = 1 through it
+  (refused on Windows); the kit stored it, so 00711810 loaded FirstTime = 1 and 00729d10 re-ran the
+  hardware detection 0071d0a0 every start (our d3d9 reports GeForce 7800, device 0x0091, which is on
+  the "High" list 009e8078) and saved it. Fix: kit/runtime/misc.cpp refuses RegSetValueEx through a
+  handle opened without KEY_SET_VALUE (ERROR_ACCESS_DENIED), as Windows does.
+- Levels: 0 Low, 1 Medium, 2 High, 4 Maximum, 5 Custom (00ab0ae8); 007115d0 applies a level.
+- First-launch black screen: tools/dev/first_launch_capture.sh (fresh profile + cold Metal cache +
+  `sample`) did NOT reproduce it in 3 launches on 2026-10-10; left as a rare known issue.
+
 ## Kit changes made so far (all in kit/)
 1. Loader: aux DLLs map before the exe's IAT is bound; exe imports bind to their
    exports; statically imported DLLs get DllMain(PROCESS_ATTACH) in key order before
@@ -204,6 +215,8 @@ Explain findings plainly and keep commands copy-pasteable.
    scale -> colour key -> encode (simple bounding-box DXT encoder). Source is the
    surface's CPU copy. Callers: 007d7580 (texture copy when formats differ),
    00759040 (per mip), 00732ca0 (boot).
+17. Registry (git, 2026-10-10): writes through a read-only key handle fail with ERROR_ACCESS_DENIED
+   (see "Detail level / FirstTime").
 15. Translator (`carbon-kit-indexed-redirects.patch`): operand_redirects also match an
    address that ends an indexed operand ([EAX*0x4 + 0xADDR]).
 14. Host (`carbon-kit-notch-fullscreen.patch`): note_screen_size also records the
