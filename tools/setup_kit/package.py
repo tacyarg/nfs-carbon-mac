@@ -10,7 +10,7 @@ Takes build/CarbonRecomp.app (run tools/build.py first) and adds:
                                   space), minus Windows-only files, plus the rebased
                                   msvcr71/msvcp71 DLLs the translation was made from
   Contents/Resources/Defaults/    first-run registry.json and mod-settings.json
-  Contents/Resources/AppIcon.icns tools/setup_kit/defaults/AppIcon.icns
+  Contents/Resources/AppIcon.icns the game's own logo from your GLOBAL files (game_art.py)
   Contents/Resources/Game/GLOBAL/XtendedInputButtons.tpk
                                   only with --button-icons: controller button icons from
                                   XtendedInput's release (xan1242; art by Aero_), downloaded
@@ -185,16 +185,23 @@ def main():
                  CFBundleShortVersionString=VERSION, CFBundleVersion=VERSION,
                  LSApplicationCategoryType="public.app-category.racing-games", LSSupportsGameMode=True,
                  NSHighResolutionCapable=True)
-    # The icon: the player's picture, else the game's own (from their NFSC.exe), else ours.
+    # The icon: the player's picture, else the game's own logo (from their GLOBAL files), else the icon
+    # in their NFSC.exe (32x32 only), else ours.
     sys.path.insert(0, str(KIT))
     import make_icon
+    import game_art
     icns = res / "AppIcon.icns"
     try:
         if a.icon:
             make_icon.icns_from_image(a.icon, icns)
             made = True
         else:
-            made = make_icon.icns_from_exe(exe, icns)
+            logo = game_art.game_logo(game)
+            if logo is not None:
+                make_icon.icns_from_logo(logo, icns)
+                made = True
+            else:
+                made = make_icon.icns_from_exe(exe, icns)
     except Exception as e:  # noqa: BLE001 - any failure falls back to the generic icon
         print(f"icon: {e}; using the generic one")
         made = False

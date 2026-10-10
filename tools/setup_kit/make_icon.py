@@ -136,6 +136,24 @@ def icns_from_image(path, out):
     write_icns(on_tile(art), out)
 
 
+def icns_from_logo(logo, out):
+    """The game's own logo (from the player's files, see game_art.py) across a dark carbon tile with a
+    blue glow behind it."""
+    logo = logo.convert("RGBA")
+    logo = logo.crop(logo.getbbox())
+    bg = carbon_weave(S, cell=16).convert("RGBA")
+    glow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse([-S * 0.1, S * 0.22, S * 1.1, S * 0.78], fill=(30, 130, 255, 170))
+    bg = Image.alpha_composite(bg, glow.filter(ImageFilter.GaussianBlur(120)))
+    vignette = Image.new("L", (S, S), 0)
+    ImageDraw.Draw(vignette).ellipse([-S * 0.3, -S * 0.3, S * 1.3, S * 1.3], fill=255)
+    bg = Image.composite(bg, Image.new("RGBA", (S, S), (0, 0, 0, 255)), vignette.filter(ImageFilter.GaussianBlur(140)))
+    w = int(S * 0.97)
+    h = int(logo.height * w / logo.width)
+    bg.alpha_composite(logo.resize((w, h), Image.LANCZOS), ((S - w) // 2, (S - h) // 2))
+    write_icns(on_tile(bg), out)
+
+
 def main():
     weave = carbon_weave(S)
     # Vignette and a cool top light.

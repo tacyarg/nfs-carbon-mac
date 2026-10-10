@@ -29,7 +29,7 @@ icons).
 
 ## What works
 
-- Native Apple Silicon app with its own icon (read from your NFSC.exe); saves and settings in
+- Native Apple Silicon app with a sharp icon made from the game's own logo; saves and settings in
   `~/Library/Application Support/NFS Carbon` like any Mac game.
 - **Game Mode**: macOS gives the game priority on the CPU and GPU and lowers controller and
   AirPods latency when it runs full screen.

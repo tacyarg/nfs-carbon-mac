@@ -43,9 +43,10 @@ Explain findings plainly and keep commands copy-pasteable.
 - `defaults/`: registry.json (working video settings), mod-settings.json (perf overlay
   off, host.display/window 2 = full screen; 0 windowed, 1 borderless), fallback
   AppIcon.icns from `make_icon.py` (original art, no EA logos).
-- Icon: package.py uses `--icon PICTURE` if given, else the game's own icon read from the
-  player's NFSC.exe at build time (only a 32x32 8-bit one exists; bicubic+sharpen up to the
-  macOS tile), else the fallback. No EA art is stored in the repo.
+- Icon: package.py uses `--icon PICTURE` if given, else the game's own NFS Carbon logo (NFS07_LOGO,
+  512x128 A8R8G8B8 in the player's GLOBAL/UniqueBootTextures.bin, read by tools/setup_kit/game_art.py,
+  a small TPK reader/DXT decoder) on a carbon tile (make_icon.icns_from_logo), else NFSC.exe's 32x32
+  icon, else the fallback. No EA art is stored in the repo. (GLOBALB's PC_LOAD is leftover NFSU2 art.)
 - Launcher sets RECOMP_D3D9_SHADER_WARM_DIR=<profile>/ShaderWarm. First launch of the
   installed app (cold Metal cache, 0.66 s of shader compiles at the movies) went black
   after the EA splash; later launches fine. Warm-up helps every launch after the first;
