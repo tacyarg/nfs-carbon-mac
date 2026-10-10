@@ -328,12 +328,32 @@ void apply_input(const PendingInput &e);
 void apply_focus(bool focused, uint32_t modifier_flags);
 
 // True when the event was held back rather than applied.
+void deliver_pending_input();
+
 bool queue_or_apply(const PendingInput &e) {
 #ifdef __EMSCRIPTEN__
     // The browser's main thread handles events; the game applies them.
     const bool queue = true;
 #else
     const bool queue = sched_in_idle_slice();
+    if (!queue) {
+        // Input still waiting from an idle slice goes first: applying this one
+        // now would let it overtake them. A focus loss queued during a slice
+        // and the gain applied right after it delivered WM_ACTIVATEAPP(1)
+        // before (0), and NFS Carbon stayed paused on a black screen.
+        bool behind = false;
+        {
+            std::lock_guard<std::mutex> held(g_pending_input_m);
+            if (!g_pending_input.empty()) {
+                g_pending_input.push_back(e);
+                behind = true;
+            }
+        }
+        if (behind) {
+            deliver_pending_input();
+            return true;
+        }
+    }
 #endif
     if (queue) {
         {
@@ -884,6 +904,9 @@ void apply_input(const PendingInput &e) {
 void apply_focus(bool focused, uint32_t modifier_flags) {
     if (!host_main_window())
         return; // the guest has no window yet
+    // The state now, not when the event was noted: a stale loss delivered after
+    // the gain would leave the guest believing it is in the background.
+    focused = g_focused;
     recomp_media_focus(focused ? 1 : 0);
     post(WM_ACTIVATEAPP_, focused ? 1 : 0, 0);
     post(WM_ACTIVATE_, focused ? 1 : 0, 0);

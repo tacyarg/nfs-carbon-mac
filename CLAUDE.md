@@ -234,6 +234,14 @@ Explain findings plainly and keep commands copy-pasteable.
   flight with no GPU completion after 2 s cancels every flight into `retiring` (targets kept until
   their GPU work ends) and recreates the swapchain at the next tick, as installing a new layer does.
   Earlier first-launch blacks were likely the same (the move into full screen at start-up).
+- Black screen (paused game) ROOT CAUSE FOUND 2026-10-10 20:53 (live process, lldb on g_mem):
+  [0xab0ad0] (WM_ACTIVATEAPP active flag, set by WndProc 007121da) = 0 and [0xab0b3c] = 1
+  (WM_ACTIVATE "inactive"), host focused; main thread blocked in GetMessageA (the game's paused
+  loop), no audio. host/sdl/main.cpp queue_or_apply queued a focus LOSS during an idle slice and
+  applied the following GAIN immediately, so (1) reached the guest before (0). Fix (kit change 19,
+  built, NOT yet run): input arriving outside a slice while older input waits is appended and the
+  queue drained in order; apply_focus posts the CURRENT g_focused. lldb attach to the app works
+  (ad hoc signed): `lldb -p PID --batch -o "p/x *(unsigned long*)&g_mem"` then guest addr + base.
 - First-launch black screen: tools/dev/first_launch_capture.sh (fresh profile + cold Metal cache +
   `sample`) did NOT reproduce it in 3 launches on 2026-10-10; left as a rare known issue.
 
