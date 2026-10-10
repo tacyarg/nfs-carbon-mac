@@ -7,9 +7,9 @@
  *
  * RESOLUTION. 00712ac0 (stdcall, int *w, int *h) turns the "racing
  * resolution" option into one of six 4:3/5:4 sizes, and every caller that
- * sizes the device asks it. It is replaced: the screen divided by the whole
- * number that lands nearest 1080 rows, so the host's whole-number scaling
- * fills the screen exactly.
+ * sizes the device asks it. It is replaced: the option walks a list of the
+ * screen's own sizes and the common 4:3, 16:10, 16:9 and 21:9 ones; the
+ * default is the screen divided by the whole number nearest 1080 rows.
  *
  * FIELD OF VIEW. The projection setup 0071b780 (thiscall, arg0 = the view;
  * its id at [arg0 + 8]) builds an aspect term from two integers at
@@ -111,10 +111,13 @@ static void log_line(const char *text) {
 #include "pad.h" /* controller layout, analog triggers, button names */
 
 /* ---- the resolution list --------------------------------------------------
- * The host scales the game's frame by a whole number and centres it
- * (host_present_fit), so only the full-screen size divided by a whole number
- * fills the screen: the list is that size / 1, 2, 3, 4 (at least 480 rows),
- * the default the one nearest 1080 rows. The option's index (00a65388) walks
+ * The host scales the frame smoothly to the window, aspect kept (game.toml
+ * [settings] scaling = "smooth"): a size of the screen's own shape fills it,
+ * another shape is shown with bars, and the view and HUD follow the chosen
+ * size's aspect. The list: the full-screen size / 1, 2, 3, 4 (at least 480
+ * rows; these fill the screen pixel for pixel) and every common size no larger
+ * than the screen, smallest first; the default is the screen's size nearest
+ * 1080 rows. The option's index (00a65388) walks
  * this list; the menu's labels come from here; the registry keeps the choice
  * packed as 0x80000000 | w << 16 | h (as the fix saves it), so a different
  * list on another Mac still finds it. The host knows the screen only once its
@@ -129,7 +132,14 @@ typedef struct {
     uint32_t w, h, hash;
     char label[32];
 } ResEntry;
-static ResEntry g_res[8];
+static ResEntry g_res[RES_MAX];
+/* Common sizes: 4:3, 16:10, 16:9, 21:9. */
+static const uint16_t kCommon[][2] = {
+    {640, 480},   {800, 600},   {1024, 768},  {1280, 960},  {1600, 1200}, {1280, 800},
+    {1440, 900},  {1680, 1050}, {1920, 1200}, {2560, 1600}, {1280, 720},  {1366, 768},
+    {1600, 900},  {1920, 1080}, {2560, 1440}, {3200, 1800}, {3840, 2160}, {2560, 1080},
+    {3440, 1440},
+};
 static int g_res_count = 0, g_res_default = 0, g_res_ready = 0;
 static int g_shape_known = 0;
 static uint32_t g_applied_w, g_applied_h;
@@ -152,18 +162,45 @@ static void screen_shape(void) {
     uint32_t best = (uint32_t)lround((double)sh / 1080.0);
     if (best < 1)
         best = 1;
+    uint32_t cand[RES_MAX][3]; /* w, h, k (0 = a common size) */
+    int n = 0;
+    for (uint32_t k = 1; k <= 4; ++k)
+        if (k == 1 || sh / k >= 480) {
+            cand[n][0] = sw / k;
+            cand[n][1] = sh / k;
+            cand[n++][2] = k;
+        }
+    for (size_t c = 0; c < sizeof kCommon / sizeof kCommon[0] && n < RES_MAX; ++c) {
+        const uint32_t w = kCommon[c][0], h = kCommon[c][1];
+        int dup = 0;
+        for (int j = 0; j < n; ++j)
+            dup |= cand[j][0] == w && cand[j][1] == h;
+        if (!dup && w <= sw && h <= sh) {
+            cand[n][0] = w;
+            cand[n][1] = h;
+            cand[n++][2] = 0;
+        }
+    }
+    /* Smallest first (by width, then height). */
+    for (int i = 1; i < n; ++i)
+        for (int j = i; j > 0 && (cand[j][0] < cand[j - 1][0] ||
+                                  (cand[j][0] == cand[j - 1][0] && cand[j][1] < cand[j - 1][1]));
+             --j)
+            for (int f = 0; f < 3; ++f) {
+                const uint32_t t = cand[j][f];
+                cand[j][f] = cand[j - 1][f];
+                cand[j - 1][f] = t;
+            }
     g_res_count = 0;
-    for (uint32_t k = 1; k <= 4 && g_res_count < (int)(sizeof g_res / sizeof g_res[0]); ++k) {
-        if (sh / k < 480 && k > 1)
-            break;
+    for (int i = 0; i < n; ++i) {
         ResEntry *e = &g_res[g_res_count];
         char key[48];
-        e->w = sw / k;
-        e->h = sh / k;
-        snprintf(e->label, sizeof e->label, "%ux%u", e->w, e->h);
+        e->w = cand[i][0];
+        e->h = cand[i][1];
+        snprintf(e->label, sizeof e->label, cand[i][2] == 1 ? "%ux%u (native)" : "%ux%u", e->w, e->h);
         snprintf(key, sizeof key, "NFSC_NATIVE_RES_%uX%u", e->w, e->h);
         e->hash = string_hash(key);
-        if (k == best)
+        if (cand[i][2] == best)
             g_res_default = g_res_count;
         ++g_res_count;
     }
@@ -172,10 +209,10 @@ static void screen_shape(void) {
         g_api->guest_write_u32(g_api, TABLE_RES_REFRESH + 4u * i, 0);
     }
     g_shape_known = 1;
-    char line[160];
-    int n = snprintf(line, sizeof line, "core.nfsc: screen %ux%u, resolutions", sw, sh);
+    char line[1024];
+    n = snprintf(line, sizeof line, "core.nfsc: screen %ux%u, resolutions", sw, sh);
     for (int i = 0; i < g_res_count && n < (int)sizeof line; ++i)
-        n += snprintf(line + n, sizeof line - n, " %s%s", g_res[i].label, i == g_res_default ? "*" : "");
+        n += snprintf(line + n, sizeof line - n, " %ux%u%s", g_res[i].w, g_res[i].h, i == g_res_default ? "*" : "");
     log_line(line);
 }
 
@@ -288,6 +325,7 @@ static void get_racing_resolution(const PopModApi *api, pop_cpu_v1 *cpu, PopHook
     if (i >= 0) {
         g_w = g_res[i].w;
         g_h = g_res[i].h;
+        g_aspect = (float)g_w / (float)g_h; /* the view and HUD follow the chosen shape */
     }
     if (g_w != g_applied_w || g_h != g_applied_h) {
         apply_hud();
