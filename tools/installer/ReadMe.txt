@@ -22,7 +22,6 @@ Then:
 
 In the game: F10 (fn+F10 on a Mac keyboard) opens the settings: full screen, borderless or windowed,
 frame-rate limit, widescreen and controller options. Resolutions are in Options > Video.
-If the very first launch stays black after the EA logo, quit (Cmd+Q) and open it again.
 
 Your saves and settings: ~/Library/Application Support/NFS Carbon/
 The setup's own files (safe to delete after building; an update is quicker with them): ~/Library/NFSC-Native-Setup/

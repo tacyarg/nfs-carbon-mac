@@ -48,8 +48,7 @@ icons).
   pedals, console-style menu prompts while a pad is in use, and the controller's own button names
   (Xbox, PlayStation, Switch Pro). Remapping in Options → Controls still works.
 
-Known issues: rarely, the very first launch stays black after the EA splash (quit and open it again);
-the rear-view mirror is not widescreen yet; the online menus are still shown (say No to connecting).
+Known issues: the rear-view mirror is not widescreen yet; the online menus are still shown (say No to connecting).
 
 ## What you need
 
