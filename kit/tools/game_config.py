@@ -194,6 +194,11 @@ def load(game_dir):
     page = settings.setdefault("page", "list")
     if page not in ("list", "tabs"):
         raise ValueError('%s: [settings] page must be "list" or "tabs", not %r' % (source, page))
+    # Presentation: "integer" scales the frame by whole multiples (crisp pixel art, borders when
+    # the window is not a multiple); "smooth" fills the window at any size, aspect preserved.
+    scaling = settings.setdefault("scaling", "integer")
+    if scaling not in ("integer", "smooth"):
+        raise ValueError('%s: [settings] scaling must be "integer" or "smooth", not %r' % (source, scaling))
     launcher = cfg.setdefault("launcher", {})
     launcher.setdefault("title", game["name"])
     launcher.setdefault("store", "")

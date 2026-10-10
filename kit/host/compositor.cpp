@@ -7,6 +7,13 @@
 #include "ui_frame_contract.h"
 #endif
 
+#if __has_include("game_config.h")
+#include "game_config.h"
+#endif
+#ifndef RECOMP_SMOOTH_SCALING
+#define RECOMP_SMOOTH_SCALING 0 // game.toml [settings] scaling = "smooth"
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -49,6 +56,8 @@ double anchored_axis(int p, int domain, int drawable, int scale, int8_t a) {
     return (drawable - double(domain) * scale) / 2 + double(p) * scale;
 }
 CompositeRect whole_rect(const CompositorInput &in, bool integer) {
+    // A 3D game (scaling = "smooth") fills the window at any guest size.
+    integer = integer && !RECOMP_SMOOTH_SCALING;
     const double scale =
         integer ? compositor_ui_scale(in.drawable_h, in.guest_h, in.scale_override)
                 : std::min(double(in.drawable_w) / in.guest_w, double(in.drawable_h) / in.guest_h);

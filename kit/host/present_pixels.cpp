@@ -24,6 +24,12 @@
 #include <vector>
 
 #include "indexed_frame.hpp"
+#if __has_include("game_config.h")
+#include "game_config.h"
+#endif
+#ifndef RECOMP_SMOOTH_SCALING
+#define RECOMP_SMOOTH_SCALING 0 // game.toml [settings] scaling = "smooth"
+#endif
 
 // ---------------------------------------------------------------------------
 // The frame-rate arithmetic. No Metal, no clock of its own: a test drives it
@@ -152,7 +158,8 @@ extern "C" struct HostFit host_present_fit(double dw, double dh, int gw, int gh)
     // mode so that cannot happen, and this fractional fall-back exists only so
     // that a drawable that is somehow smaller still shows the whole frame
     // instead of cropping it.
-    double scale = fractional >= 1.0 ? std::floor(fractional) : fractional;
+    // A 3D game (scaling = "smooth") takes the fractional scale and fills the drawable.
+    double scale = fractional >= 1.0 && !RECOMP_SMOOTH_SCALING ? std::floor(fractional) : fractional;
     fit.scale = scale;
     fit.w = std::floor(gw * scale);
     fit.h = std::floor(gh * scale);
