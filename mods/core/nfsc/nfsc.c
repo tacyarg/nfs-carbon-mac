@@ -121,6 +121,7 @@ static void log_line(const char *text) {
 #include "hd_ui.h" /* HD fonts and cursor laid out at their original size */
 #include "intro.h" /* skip the start-up movies */
 #include "online.h" /* hide Quick Match / Custom Match */
+#include "rumble.h" /* controller rumble from the game's force-feedback values */
 
 /* ---- the resolution list --------------------------------------------------
  * The host scales the frame smoothly to the window, aspect kept (game.toml
@@ -506,6 +507,7 @@ PopModStatus pop_mod_init(const PopModApi *api) {
     hd_ui_install();
     intro_install();
     online_install();
+    rumble_install();
     PopModStatus s = install(SETUP_PROJECTION, setup_projection, POP_HOOK_BEFORE, 0);
     if (s != POP_OK)
         return s;
@@ -535,6 +537,7 @@ PopModStatus pop_mod_init(const PopModApi *api) {
 }
 
 PopModStatus pop_mod_exit(void) {
+    impact_feedback_stop(g_api);
     for (unsigned i = 0; i < sizeof g_hooks / sizeof g_hooks[0]; ++i)
         if (g_hooks[i]) {
             g_api->hook_remove(g_api, g_hooks[i]);
