@@ -11,7 +11,7 @@ native controller support. There is no emulator, no Wine and no CrossOver.
 This project is not affiliated with or endorsed by Electronic Arts. *Need for Speed* and *Carbon* are
 trademarks of Electronic Arts Inc.
 
-**Status: early, but playable.** Career, races, the garage and the menus work at 60 fps with sound.
+**Status: Fully playable.** Career, races, the garage and the menus work at 60 fps with sound.
 
 ## Play it on your Mac
 
