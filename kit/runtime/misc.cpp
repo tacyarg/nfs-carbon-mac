@@ -1047,6 +1047,20 @@ void i_ImmSetCompositionWindow(X86 *c) {
     set_eax(c, 1);
 }
 
+// Netbios(NCB *): no NetBIOS here. Answered NRC_ENVNOTDEF (0x34) in the NCB's
+// retcode and cmd_cplt and as the result, as Windows does without NetBIOS over
+// TCP/IP. Returning 0 (NRC_GOODRET) told EA's online library (NFS Carbon, at
+// profile load) that the adapter query worked; it read the unfilled buffer and
+// its network thread (00977280) died with an access violation.
+void n_Netbios(X86 *c) {
+    const uint32_t ncb = arg(c, 0);
+    if (ncb && gm_valid(ncb, 0x40)) {
+        g_mem[ncb + 1] = 0x34;  // ncb_retcode
+        g_mem[ncb + 0x31] = 0x34; // ncb_cmd_cplt
+    }
+    set_eax(c, 0x34);
+}
+
 // -------------------------------------------------------------------------
 // WSOCK32: enough for startup probing; real networking is a later task.
 // -------------------------------------------------------------------------
@@ -2362,7 +2376,7 @@ const ImportShim g_misc_shims[] = {
     {"RPCRT4.dll", "UuidToStringA", 2, r_UuidToStringA},
     {"RPCRT4.dll", "RpcStringFreeA", 1, r_RpcStringFreeA},
     {"ole32.dll", "CoCreateGuid", 1, o_CoCreateGuid},
-    {"NETAPI32.dll", "Netbios", 1, nullptr},
+    {"NETAPI32.dll", "Netbios", 1, n_Netbios},
     {"DDRAW.dll", "DirectDrawCreate", 3, nullptr},
     {"DDRAW.dll", "DirectDrawEnumerateA", 2, nullptr},
     {"DINPUT.dll", "DirectInputCreateA", 4, nullptr},
