@@ -302,6 +302,20 @@ Explain findings plainly and keep commands copy-pasteable.
   008d3ca0 returning to 00888917, SleepEx via IAT 0x9c1140) - git 3a97c02 has the full version.
 - Not ported (not widescreen): Camera.ixx free look, PostFX SMAA, MSAA, SimRate/high-FPS.
 
+## Cheats (mods/core/nfsc/cheats.h, 2026-10-17; user: all work)
+- Settings (group cheats, Mods tab, live): infinite_nitrous, infinite_speedbreaker, engine_power
+  (Normal/150/200/300%), opponent_power (Normal/Half/Quarter; every non-player car).
+- REPLACE 006e3df0 (engine nitrous step, thiscall, RET 0xc): tank [engine+0xf0]; its returned
+  ST0 is the power multiplier the drivetrain 006ffe60 stores at [engine+0xf4] and the torque
+  curve 006e31e0 multiplies by, so the cheat scales ST0. Player test = [[engine+0x2c]]->vfunc 0x20
+  (the game's own infinite-nitrous reward branch, card 10). Speedbreaker byte 0x00b4d86c
+  (Tweak_InfiniteRaceBreaker, NFSPluginSDK). 006e31e0 itself is not hookable (not a listed function).
+  Canyon duels turn nitrous/speedbreaker off; the power settings still work.
+- Player's Kenji hang (log 20261015-205451, 58-min session, external drive): not reproduced by
+  the user with these cheats (2026-10-17); not Netbios (that session never called it). Unconfirmed;
+  next evidence = `sample CarbonRecomp 10` during a hang. Scheduler "baton held" numbers count idle
+  time of the last hand-off thread, not starvation.
+
 ## Kit changes made so far (all in kit/)
 1. Loader: aux DLLs map before the exe's IAT is bound; exe imports bind to their
    exports; statically imported DLLs get DllMain(PROCESS_ATTACH) in key order before

@@ -122,6 +122,7 @@ static void log_line(const char *text) {
 #include "intro.h" /* skip the start-up movies */
 #include "online.h" /* hide Quick Match / Custom Match */
 #include "rumble.h" /* controller rumble from the game's force-feedback values */
+#include "cheats.h" /* infinite nitrous and speedbreaker */
 
 /* ---- the resolution list --------------------------------------------------
  * The host scales the frame smoothly to the window, aspect kept (game.toml
@@ -508,6 +509,7 @@ PopModStatus pop_mod_init(const PopModApi *api) {
     intro_install();
     online_install();
     rumble_install();
+    cheats_install();
     PopModStatus s = install(SETUP_PROJECTION, setup_projection, POP_HOOK_BEFORE, 0);
     if (s != POP_OK)
         return s;
@@ -522,7 +524,7 @@ PopModStatus pop_mod_init(const PopModApi *api) {
         if (api->guest_alloc(api, 8, &g_scratch) != POP_OK)
             g_scratch = 0;
         /* The mirror and picture-in-picture shapes; widescreen works without them. */
-        if (install(BUILD_SCREEN_QUAD, quad_enter, POP_HOOK_BEFORE, 11) != POP_OK ||
+        if (install(BUILD_SCREEN_QUAD, quad_enter, POP_HOOK_BEFORE, 13) != POP_OK ||
             install(BUILD_SCREEN_QUAD, quad_leave, POP_HOOK_AFTER, 15) != POP_OK)
             log_line("core.nfsc: the mirror is not narrowed for the wide screen");
         if ((s = install(SET_WIDESCREEN_MODE, widescreen_mode_enter, POP_HOOK_BEFORE, 2)) != POP_OK ||
