@@ -18,7 +18,7 @@ let workDir = supportDir.appendingPathComponent("source")
 let keptOnUpdate: Set<String> = ["analysis", ".venv", "build", "original", "rebased", "dist"]
 let projectURL = "https://github.com/vasist15-source/nfs-carbon-mac"
 // The HD UI option (tools/setup_kit/hd_ui.py) stays hidden until a career saved without it loads with it.
-let offerHDUI = false
+let offerHDUI = true
 
 enum Phase { case idle, checking, building, done, failed, cancelled }
 

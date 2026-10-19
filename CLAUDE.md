@@ -198,7 +198,13 @@ Explain findings plainly and keep commands copy-pasteable.
   backup 20261010-2043). The memory files only hold byte-identical copies of disk files (checked
   all entries) plus that stamp, so hd_ui.py now removes ONLY the entries of files it rewrote
   (today GlobalB.lzc, hash 4c939b36) and keeps the rest. Built 2026-10-10, career NOT yet re-tested.
-- PAUSED 2026-10-10 by the user (HD UI dropped for now; Setup app hides it, offerHDUI = false).
+- RESUMED + CONFIRMED 2026-10-20: the full HD UI build (all stage-1 files) loads the user's career
+  ("Resume Career") and plays fine. The fonts-only test that failed on 10-10 passed today with no
+  failed bMalloc (00476b20; note its OOM path writes to address 0, which does NOT crash in the port),
+  so the 10-10 "Start Career" was most likely the Netbios bug fixed 10-17 (f2fb6ad: network thread
+  crashing at profile load, a stray write whose target depended on memory layout). Setup app
+  offerHDUI = true again.
+- (old) PAUSED 2026-10-10 by the user (HD UI dropped for now; Setup app hides it, offerHDUI = false).
   Career bisect with HD_UI_SKIP (wildcards): the career shows "Start Career" (save intact, loads
   fine without HD) with ONLY GLOBAL/GLOBALA.BUN rewritten (the mod's GLOBALA copy is byte-identical
   to the original; our install then binds HD FONT_NFS_BODY/TITLE 2048x2048 etc. into its

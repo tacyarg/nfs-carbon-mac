@@ -56,3 +56,11 @@ Third-party work this port reimplements:
   Its controller button icons (XtendedInputButtons.tpk, art by Aero_) are not
   included in this repository: the setup optionally downloads them from
   XtendedInput's GitHub release onto the player's Mac.
+
+- NFS Carbon Remastered UI by BadassBaboon (nfsmods.xyz/mod/1095) is not included: the Setup
+  app downloads it on the player's Mac only when its checkbox is ticked. It is installed by
+  tools/setup_kit/hd_ui.py, which runs the mod's own Endscript; the Endscript commands and the
+  texture-pack layout follow Endscript and Darius by MaxHwoy / nlgxzef (MIT,
+  github.com/nlgxzef/Endscript, github.com/nlgxzef/Darius). What Aero_'s NFSHDContentSupport
+  (GPL-3) does for fonts and the cursor is reimplemented in mods/core/nfsc/hd_ui.h; none of its
+  code is used.

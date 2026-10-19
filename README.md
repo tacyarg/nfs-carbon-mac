@@ -47,6 +47,10 @@ icons).
   B nitrous, X speedbreaker, Y crew, LB look back, RB camera, right stick to shift), triggers as analog
   pedals, console-style menu prompts while a pad is in use, and the controller's own button names
   (Xbox, PlayStation, Switch Pro). Remapping in Options → Controls still works.
+- **HD menus, HUD and fonts** (optional, a checkbox in the Setup app): NFS Carbon Remastered UI by
+  BadassBaboon, downloaded from nfsmods.xyz and installed into the app's own copy of the game, with
+  the fonts and cursor kept at their original size as Aero_'s HD Content Support does on Windows.
+  The minimap, track maps and crew logos are not HD yet.
 
 
 ## What you need
