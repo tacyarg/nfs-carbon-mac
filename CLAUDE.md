@@ -311,7 +311,7 @@ Explain findings plainly and keep commands copy-pasteable.
   (the game's own infinite-nitrous reward branch, card 10). Speedbreaker byte 0x00b4d86c
   (Tweak_InfiniteRaceBreaker, NFSPluginSDK). 006e31e0 itself is not hookable (not a listed function).
   Canyon duels turn nitrous/speedbreaker off; the power settings still work.
-- no_catchup (2026-10-20, built, NOT yet run): REPLACE 0063ead0 (GRaceParameters catch-up getter,
+- no_catchup (2026-10-20, CONFIRMED by the user): REPLACE 0063ead0 (GRaceParameters catch-up getter,
   thiscall, plain RET, AL; attribute 0x10db04e6, missing = on; Quick Race's option writes it via
   00626440 from QR block profile+0x2b0c4+mode*0x28 byte 0xb, menu id 0x13e6). Hook slot 23.
 - Player's Kenji hang (log 20261015-205451, 58-min session, external drive): not reproduced by
