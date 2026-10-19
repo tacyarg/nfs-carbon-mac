@@ -392,6 +392,10 @@ class Installer:
         for key in keys:
             data = self.files[key].assemble() if key in self.files else self.raw[key]
             dest = self.path(self.names.get(key, key))
+            if dest.suffix.lower() == ".lzc" and data[:4] != b"JDLZ":
+                # .lzc files ship as one JDLZ block, which the game unpacks on load (0069eda0); without a
+                # compressor they stay unpacked, which the game also accepts.
+                data = bun.jdlz_compress(data, len(data)) or data
             tmp = dest.with_name(dest.name + ".hdui")
             tmp.write_bytes(data)
             os.replace(tmp, dest)  # replaces the APFS clone, never the player's file

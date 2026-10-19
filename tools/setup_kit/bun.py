@@ -6,8 +6,13 @@ Nikki/Support.Carbon/Class/TPKBlock.cs and Texture.cs); see CLAUDE.md "HD UI mod
 
     python tools/setup_kit/bun.py FILE          # round-trip check: parse, rewrite, compare
 """
+import ctypes
+import hashlib
+import os
 import struct
+import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 TPK, TPK_INFO, TPK_DATA = 0xB3300000, 0xB3310000, 0xB3320000
@@ -15,6 +20,38 @@ INFO_HEADER, INFO_KEYS, INFO_TEXTURES, INFO_FORMATS = 0x33310001, 0x33310002, 0x
 INFO_SLOTS, PART_MAGIC = 0x33310003, 0x55441122
 DATA_HEADER, DATA_PIXELS = 0x33320001, 0x33320002
 ALIGN = 0x80
+_JDLZ = []
+
+
+def jdlz_compressor():
+    """jdlz.c's jdlz_compress through ctypes, built once into the Setup cache; None if there is no compiler."""
+    if not _JDLZ:
+        source = Path(__file__).with_name("jdlz.c")
+        tag = hashlib.sha256(source.read_bytes()).hexdigest()[:12]
+        lib = Path.home() / f"Library/Caches/NFS Carbon Setup/jdlz-{tag}.dylib"
+        fn = None
+        try:
+            if not lib.is_file():
+                lib.parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["cc", "-O2", "-shared", "-o", str(lib), str(source)], check=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            fn = ctypes.CDLL(str(lib)).jdlz_compress
+            fn.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t]
+            fn.restype = ctypes.c_size_t
+        except (OSError, subprocess.CalledProcessError):
+            fn = None
+        _JDLZ.append(fn)
+    return _JDLZ[0]
+
+
+def jdlz_compress(data, cap):
+    """A JDLZ block for data, or None if it would not be smaller than cap bytes (or no compressor)."""
+    fn = jdlz_compressor()
+    if fn is None or not data:
+        return None
+    out = ctypes.create_string_buffer(cap)
+    n = fn(data, len(data), out, cap)
+    return out.raw[:n] if n else None
 
 
 def jdlz_decompress(src):
@@ -315,9 +352,10 @@ class CompressedTpk:
     (2 = by parts), ref count, 0}. A texture's parts are {0x55441122, unpacked size, stored size (to the next part),
     unpacked position, stored position, 0} + a JDLZ/HUFF/RAWW block; unpacked, they are its pixels followed by its
     0x7C-byte header and 0x18-byte format entry. Unchanged textures are written back as they were; changed or new
-    ones plain (row flags 0: the stored bytes are the unpacked texture). The game reads a by-parts texture into a
-    buffer of its unpacked size and unpacks it there in place (0055b8d0, 006aaba0), so stored parts must never be
-    bigger than what they unpack to: uncompressed (RAWW) parts are, and overflowed that buffer."""
+    ones JDLZ-packed in 32 KB parts like the originals (jdlz.c), or plain (row flags 0: the stored bytes are the
+    unpacked texture) when that does not work. The game reads a by-parts texture into a buffer of its unpacked
+    size and unpacks it there in place (0055b8d0, 006aaba0), so stored parts must never be bigger than what they
+    unpack to (uncompressed RAWW parts are, and overflowed that buffer) - see fits_in_place."""
 
     def __init__(self, d, o, size):
         self.base = o - 8
@@ -367,6 +405,25 @@ class CompressedTpk:
     @property
     def collection(self):
         return self.info_header[4:4 + 0x1C].split(b"\0")[0].decode("latin-1")
+
+    PART = 0x8000
+
+    def _packed(self, t):
+        """A changed texture packed the way the originals are: JDLZ parts of 32 KB unpacked (RAWW where a piece
+        does not shrink), the header in its own part, part 0 last. None if it would not unpack in place."""
+        blob = t.data + bytes(t.header[:0x7C].ljust(0x7C, b"\0")) + bytes(t.fmt)
+        pieces = [(i, t.data[i:i + self.PART]) for i in range(self.PART, len(t.data), self.PART)]
+        pieces += [(len(t.data), blob[len(t.data):]), (0, t.data[:self.PART])]
+        parts = []
+        for pos, piece in pieces:
+            block = jdlz_compress(piece, len(piece))
+            if block is None:
+                parts.append((pos, self._raww_part(piece, pos)))
+            else:
+                block += bytes(-len(block) % 4)
+                parts.append((pos, struct.pack("<6I", PART_MAGIC, len(piece), 24 + len(block), pos, 0, 0) + block))
+        packed = self._restamp(parts)
+        return packed if self.fits_in_place(packed, len(blob)) else None
 
     @staticmethod
     def _raww_part(piece, out_pos):
@@ -428,6 +485,11 @@ class CompressedTpk:
                 blobs[id(t)] = self._with_header(t)
             elif t not in changed:
                 blobs[id(t)] = t.raw
+        todo = [t for t in self.textures if blobs.get(id(t)) is None]
+        with ThreadPoolExecutor(os.cpu_count() or 4) as pool:   # ctypes lets the compressor run in parallel
+            for t, packed in zip(todo, pool.map(self._packed, todo)):
+                blobs[id(t)] = packed
+        for t in self.textures:
             if blobs.get(id(t)) is None:   # plain: the unpacked bytes themselves
                 plain.add(id(t))
                 blobs[id(t)] = t.data + bytes(t.header[:0x7C].ljust(0x7C, b"\0")) + bytes(t.fmt)
