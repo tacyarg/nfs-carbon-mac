@@ -3,7 +3,9 @@
  * Format (the game's decoder 0069c5d0; bun.jdlz_decompress): 16-byte header 'JDLZ' 02 10 00 00, unpacked size,
  * packed size (header included); then tokens steered by two flag bytes read when used up: f1 says literal (0) or
  * match (1); for a match f2 says which kind: 1 = distance 1..16, length 3..4098; 0 = distance 17..2064, length
- * 3..34. Greedy matching with a hash chain. Every result is decoded again and compared before it is returned.
+ * 3..34. The game decodes until the packed size is used up, reading a flag byte right after each token that empties
+ * one - so a stream ending on an emptied flag byte carries that byte too. Greedy matching with a hash chain.
+ * Every result is decoded again the game's way and compared before it is returned.
  *
  *   cc -O2 -shared -o jdlz.dylib jdlz.c
  */
@@ -14,38 +16,45 @@
 #define WINDOW 4096u /* ring of previous positions, >= the 2064 longest distance */
 #define HASH_BITS 16
 #define CHAIN 48
+#define SLACK 4098u /* decode buffers are n + SLACK bytes */
 
+/* The game's decoder (0069c5d0) exactly: driven by the packed size (it stops when the bytes after the first two
+ * flag bytes are used up, never by the output size), flag bytes refilled right after the token that used up the
+ * last bit - also after the final token. Returns the bytes written, or 0 if the stream would misbehave. */
 static size_t decode(const uint8_t *src, size_t n_src, uint8_t *out, size_t n) {
-    size_t i = 16, o = 0;
-    unsigned f1 = 1, f2 = 1;
-    while (o < n) {
-        if (f1 == 1) {
-            if (i >= n_src) return 0;
-            f1 = src[i++] | 0x100;
-        }
-        if (f2 == 1) {
-            if (i >= n_src) return 0;
-            f2 = src[i++] | 0x100;
-        }
-        if (f1 & 1) {
-            if (i + 2 > n_src) return 0;
+    if (n_src < 18) return 0;
+    const uint8_t *p = src + 18, *end = src + n_src;
+    unsigned f1 = src[16] | 0x100, f2 = src[17] | 0x100;
+    size_t o = 0;
+    while (p != end) {
+        if (p > end) return 0;
+        if (!(f1 & 1)) {
+            if (o < n) out[o++] = *p;   /* the game drops literals past the end */
+            ++p;
+        } else {
+            if (p + 2 > end) return 0;
             size_t len, back;
             if (f2 & 1) {
-                len = (src[i + 1] | (size_t)(src[i] & 0xF0) << 4) + 3;
-                back = (src[i] & 0x0F) + 1;
+                len = ((size_t)(p[0] & 0xF0) << 4 | p[1]) + 3;
+                back = (p[0] & 0x0F) + 1;
             } else {
-                back = (src[i + 1] | (size_t)(src[i] & 0xE0) << 3) + 17;
-                len = (src[i] & 0x1F) + 3;
+                len = (p[0] & 0x1F) + 3;
+                back = ((size_t)(p[0] & 0xE0) << 3 | p[1]) + 17;
             }
-            i += 2;
-            if (back > o || o + len > n) return 0;
-            for (size_t k = 0; k < len; ++k, ++o) out[o] = out[o - back];
             f2 >>= 1;
-        } else {
-            if (i >= n_src) return 0;
-            out[o++] = src[i++];
+            p += 2;
+            if (back > o || o + len > n + SLACK) return 0;   /* retail streams may end a match past n */
+            for (size_t k = 0; k < len; ++k, ++o) out[o] = out[o - back];
         }
         f1 >>= 1;
+        if (f1 == 1) {
+            if (p >= end) return 0;
+            f1 = *p++ | 0x100;
+        }
+        if (f2 == 1) {
+            if (p >= end) return 0;
+            f2 = *p++ | 0x100;
+        }
     }
     return o;
 }
@@ -144,13 +153,16 @@ size_t jdlz_compress(const uint8_t *src, size_t n, uint8_t *dst, size_t cap) {
         ++f1_n;
     }
 #undef INSERT
+    /* The game reads the next flag byte right after the token that used up the last bit, even at the end. */
+    if (ok && f1_n == 8) dst[out++] = 0;
+    if (ok && f2_n == 8) dst[out++] = 0;
     free(head);
     free(prev);
     if (!ok || out >= cap) return 0;
     memcpy(dst, "JDLZ\x02\x10\0\0", 8);
     uint32_t sizes[2] = {(uint32_t)n, (uint32_t)out};
     memcpy(dst + 8, sizes, 8);
-    uint8_t *check = malloc(n);
+    uint8_t *check = malloc(n + SLACK);
     size_t good = check && decode(dst, out, check, n) == n && memcmp(check, src, n) == 0;
     free(check);
     return good ? out : 0;
