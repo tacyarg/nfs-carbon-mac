@@ -160,11 +160,11 @@ int main(int argc, char **argv) {
     snprintf(path, sizeof path, "%s/NFSC.exe", game);
     set_default("RECOMP_EXE", path);
     set_default("RECOMP_LOG", "1");
-    // Render resolution (core.nfsc/render_scale): 0 Sharpest follows the screen (the
+    // Render resolution (core.nfsc/render_scale): 0 Screen follows the screen (the
     // renderer's default: 3D drawn at the Retina size whatever the game resolution),
-    // 1 Balanced draws at 1.5x the game resolution, 2 Fastest at the game resolution.
+    // 1 draws at 1.5x the game resolution, 2 (the default) at the game resolution.
     // The renderer reads the scale once, at start-up.
-    switch (mod_setting(profile, "core.nfsc/render_scale", 1)) {
+    switch (mod_setting(profile, "core.nfsc/render_scale", 2)) {
     case 1:
         set_default("RECOMP_D3D9_SCALE", "1.5");
         break;

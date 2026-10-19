@@ -37,9 +37,10 @@ icons).
   Options → Video, from 640×480 to 4K, including the screen's native sizes. The field of view is
   Hor+ and the HUD is moved out to the edges.
 - **Settings page (F10**, fn+F10 on a Mac keyboard):
-  - Graphics: full screen, borderless or windowed; render resolution (Sharpest, Balanced,
-    Fastest); frame limit (original, 40, 60, or an experimental 120 FPS); world texture filtering
-    up to 16x anisotropic; a performance overlay with frame times (also F11).
+  - Graphics: full screen, borderless or windowed; render resolution (the game's own
+    resolution by default, 1.5x for smoother edges, or the full screen); frame limit (original,
+    40, 60, or an experimental 120 FPS); world texture filtering up to 16x anisotropic; a
+    performance overlay with frame times (also F11).
   - Mods: skip intro movies, hide the closed online modes, how much you see to the sides, no
     rubberbanding (opponents don't catch up), and cheats (off by default: infinite nitrous and
     speedbreaker, engine power, opponent engine power).

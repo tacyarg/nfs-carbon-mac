@@ -314,8 +314,8 @@ Explain findings plainly and keep commands copy-pasteable.
 - The Metal backend draws every render target at drawable rows / game rows (rounded to 1/8), so
   the in-game resolution never changed GPU work: 1920x1080 on the M4 Air rendered 3840x2160 + 4x
   MSAA (GPU 14.6 ms, 47 fps in Hillsborough). RECOMP_D3D9_SCALE=1 gave a stable 60 (user test).
-  Setting core.nfsc/render_scale (0 Sharpest = follow screen, 1 Balanced = 1.5x, default,
-  2 Fastest = 1x) is read by launch.c from mod-settings.json and exported as RECOMP_D3D9_SCALE.
+  Setting core.nfsc/render_scale (0 Screen = follow screen, 1 = 1.5x, 2 Game resolution = 1x,
+  default since 2026-10-20: Balanced dropped frames in heavy scenes on the M4 Air) is read by launch.c from mod-settings.json and exported as RECOMP_D3D9_SCALE.
 - Other video options: in-game V-Sync does nothing (presenter always display-synced; F10 frame
   limit rules); in-game Texture Filtering is overridden by F10 World filtering unless "Game's own";
   FSAA works (game's multisample type -> 2x/4x).
