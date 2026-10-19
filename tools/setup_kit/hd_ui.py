@@ -7,8 +7,10 @@ This runs the same script with a small Endscript interpreter (commands as in End
 github.com/nlgxzef/Endscript) and the TPK writer in bun.py, against GAME_COPY - the app's own copy, never the
 player's folder. The archive is downloaded once (pinned SHA-256) into ~/Library/Caches/NFS Carbon Setup.
 
-Not done yet (logged as "skipped"): the streamed track textures (unpack_stream ... pack_stream) and packages
-imported into a file that lacks them. Optional extras (checkbox blocks) take their "disabled" branch.
+Streamed track sections (unpack_stream ... pack_stream) are edited in place of Binarius's temp folder: a changed
+section is appended to the app's stream file and its index record (L5RA.BUN chunk 0x34110) pointed at it. Not done
+yet (logged as "skipped"): packages imported into a file that lacks them. Optional extras (checkbox blocks) take
+their "disabled" branch, except those in CHECKBOXES_ON.
 """
 import argparse
 import hashlib
@@ -60,6 +62,12 @@ FIELDS = {
 # BuildVersion.moo entry with one from another build - a career saved by the player's game then came back as
 # "Start Career". Here only the entries of files this install rewrites are taken out; everything else, the build
 # stamp included, stays as shipped.
+# Checkbox extras turned on: the game runs at 60 fps (or more) here.
+CHECKBOXES_ON = {"Use 60FPS Barrier Animation?"}
+# Track streaming: index chunk of 0x5C-byte section records {name[8], number, ..., +0x14 file offset, +0x18 size,
+# +0x1C stored size, ...}; sections start at 0x800 boundaries of STREAM<track>.BUN.
+SECTIONS_CHUNK, SECTION_SIZE, SECTION_ALIGN = 0x34110, 0x5C, 0x800
+
 MEMORY_FILES = ["GLOBAL/GlobalMemoryFile.bin", "GLOBAL/InGameMemoryFile.bin", "GLOBAL/CarHeadersMemoryFile.bin",
                 "GLOBAL/PermanentMemoryFile.bin", "GLOBAL/FrontEndMemoryFile.bin"]
 
@@ -208,6 +216,7 @@ class Installer:
         self.skipped = {}
         self.names = {}      # game-relative path (upper) -> as the script spells it
         self.unlock = False
+        self.streams = {}    # temp folder (upper) -> (index file, stream file), from unpack_stream
 
     def path(self, rel):
         """The real (case-preserving) path of a game-relative path in the copy."""
@@ -221,12 +230,62 @@ class Installer:
         key = rel.upper()
         self.names.setdefault(key, rel)
         if key not in self.files:
-            self.files[key] = bun.ChunkFile(self.raw[key] if key in self.raw else bun.load(self.path(rel)))
+            section = self.section_of(rel)
+            data = (self.raw[key] if key in self.raw else self.read_section(*section) if section
+                    else bun.load(self.path(rel)))
+            self.files[key] = bun.ChunkFile(data)
         return self.files[key]
+
+    def section_of(self, rel):
+        """(index file, stream file, section name) for TEMP/<section>/DATA.BIN under an unpack_stream folder."""
+        parts = rel.replace("\\", "/").upper().split("/")
+        if len(parts) >= 3 and parts[-1] == "DATA.BIN":
+            stream = self.streams.get("/".join(parts[:-2]))
+            if stream:
+                return stream + (parts[-2],)
+        return None
+
+    def section_record(self, index, name):
+        """(chunk file, item number, record offset) of a section's index record."""
+        f = self.file(index)
+        for i, (_, item) in enumerate(f.items):
+            if isinstance(item, bytes) and struct.unpack_from("<I", item)[0] == SECTIONS_CHUNK:
+                for at in range(8, len(item) - SECTION_SIZE + 1, SECTION_SIZE):
+                    if item[at:at + 8].split(b"\0")[0].decode("latin-1").upper() == name:
+                        return f, i, at
+        raise RuntimeError(f"no stream section {name} in {index}")
+
+    def read_section(self, index, stream, name):
+        f, i, at = self.section_record(index, name)
+        offset, size, stored = struct.unpack_from("<3I", f.items[i][1], at + 0x14)
+        if size != stored:
+            raise RuntimeError(f"stream section {name} is compressed")
+        with open(self.path(stream), "rb") as fh:
+            fh.seek(offset)
+            return fh.read(size)
+
+    def pack_sections(self):
+        """Changed sections go at the end of the app's copy of the stream file (an independent copy, never the
+        player's file); their index records point there."""
+        for key in [k for k in self.files if getattr(self.files[k], "dirty", False) and self.section_of(k)]:
+            index, stream, name = self.section_of(key)
+            data = self.files.pop(key).assemble()
+            dest = self.path(stream)
+            with open(dest, "r+b") as fh:
+                end = fh.seek(0, 2)
+                offset = end + (-end % SECTION_ALIGN)
+                fh.write(bytes(offset - end) + data)
+            f, i, at = self.section_record(index, name)
+            phase, item = f.items[i]
+            item = bytearray(item)
+            struct.pack_into("<3I", item, at + 0x14, offset, len(data), len(data))
+            f.items[i] = (phase, bytes(item))
+            self.mark(index)
+            self.log(f"  stream section {name} rewritten at the end of {stream} ({len(data) // 1024} KB)")
 
     def tpk(self, rel, collection):
         p = self.path(rel)
-        if not p.exists() and rel.upper() not in self.raw:
+        if not p.exists() and rel.upper() not in self.raw and not self.section_of(rel):
             return None, "missing file"
         tpk = self.file(rel).tpk(collection)
         if tpk is None:
@@ -237,32 +296,31 @@ class Installer:
         self.skipped.setdefault(why, []).append(" ".join(cmd[:4]))
 
     def run(self, blocks):
-        streaming = False
         for b in blocks:
             if b[0] == "if":
                 cond = b[1]
                 exists = cond[0] == "collection_exists" and self.tpk(cond[1], cond[3])[0] is not None
                 self.run(b[2] if exists else b[3])
             elif b[0] == "checkbox":
-                self.run(b[3])
+                self.run(b[2] if b[1] in CHECKBOXES_ON else b[3])
             elif b[0] == "combobox":
                 choice = self.language if "language" in b[2].lower() else BASE_GAME
                 self.run(b[3].get(choice, []))
             else:
-                cmd = b[1]
-                if cmd[0] == "unpack_stream":
-                    streaming = True
-                if streaming:
-                    self.skip("streamed track textures", cmd)
-                    if cmd[0] == "pack_stream":
-                        streaming = False
-                    continue
-                self.command(cmd)
+                self.command(b[1])
 
     def command(self, c):
         op = c[0]
         if op == "end":
             return
+        if op == "unpack_stream":
+            # unpack_stream INDEX STREAM TEMP: sections are read from STREAM when TEMP/<name>/DATA.BIN is used
+            self.streams[c[3].upper()] = (c[1], c[2])
+            return
+        if op in ("pack_stream", "erase_folder"):
+            return  # sections are written back in write()
+        if op == "delete" or (op == "new" and self.section_of(c[-1])):
+            return  # Binarius closing a file it had open / opening a temp file
         if op == "unlock_memory":
             self.unlock = True  # applied in write(), once the rewritten files are known
             return
@@ -347,8 +405,6 @@ class Installer:
                 self.log(f"  layout {name.group().decode()} added to {rel}")
                 return
             self.skip("package not in that file", c)
-        elif op == "delete":
-            self.skip("streamed track textures", c)
         else:
             self.skip(f"unsupported command {op}", c)
 
@@ -370,6 +426,7 @@ class Installer:
 
     def write(self):
         written = []
+        self.pack_sections()
         keys = sorted(set(self.raw) | {k for k, f in self.files.items() if getattr(f, "dirty", False)})
         # HD_UI_SKIP="GLOBAL/GLOBALB.LZC,..." leaves those files as shipped (for narrowing a problem down).
         skip = {x.strip().upper() for x in os.environ.get("HD_UI_SKIP", "").split(",") if x.strip()}

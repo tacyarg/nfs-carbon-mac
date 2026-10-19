@@ -238,6 +238,15 @@ Explain findings plainly and keep commands copy-pasteable.
   RAWW storage makes DYNTEX 50 MB, WMDYNTEX 154 MB, minimaps ~108 MB each, TRACKMAPS 101 MB
   (a JDLZ compressor would shrink them). Still skipped: streamed L5RA textures (barrier arrows,
   unpack_stream/pack_stream).
+- SMALLER APP + BARRIER ARROWS (2026-10-20, built, NOT yet run): tools/setup_kit/jdlz.c (cc'd once into the
+  Setup cache, ctypes; self-checks each block) packs changed compressed-pack textures in 32 KB JDLZ parts
+  (fits_in_place-checked, plain fallback) and re-JDLZes rewritten .lzc files: HD UI growth ~1 GB -> ~300 MB.
+  Stream sections: unpack_stream registers TEMP/<section>/DATA.BIN as virtual files (read from the stream at the
+  index record's offset); a changed section is appended (0x800-aligned) to the app's copy of STREAML5RA.BUN and its
+  L5RA.BUN record (chunk 0x34110, 0x5C each: name[8], +0x14 offset, +0x18 size, +0x1C stored size; +0x34 hash,
+  no checksum strings in the exe) repointed. "TPK<n>" = the n-th pack. Y0 (shared textures) 72.6 -> 116 MB with
+  the two 2048^2 ARGB arrows; track streaming pool (006b6e00 -> 007a42e0: 0x445c000/0x441c000 + 65000 KB +
+  extras, about 133 MB) made 48 MB bigger by game.toml patches at 006b6ef2/006b6ef9. 60FPS barrier checkbox on.
 - Order of work: (1) whole-file copies (GLOBALA/FRONTB2 per language) + uncompressed TPKs (FRONTB1,
   GLOBALA, INGAMEA, INGAMEB, GLOBALB) + font/cursor original-size fix in core.nfsc + Setup checkbox;
   (2) compressed TPKs + FNG imports + NIS; (3) the optional extras (2015 minimap etc.).

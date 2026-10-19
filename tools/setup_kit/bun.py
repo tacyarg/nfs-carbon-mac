@@ -553,7 +553,10 @@ class ChunkFile:
     def tpk(self, collection):
         # The stored name has room for 27 characters (MINI_MAP_CASINOTOWN_UNLOCKED is kept as ..._UNLOCKE).
         want = collection.lower()[:0x1B]
-        return next((t for t in self.tpks() if t.collection.lower()[:0x1B] == want), None)
+        found = next((t for t in self.tpks() if t.collection.lower()[:0x1B] == want), None)
+        if found is None and want.startswith("tpk") and want[3:].isdigit() and int(want[3:]) < len(self.tpks()):
+            found = self.tpks()[int(want[3:])]   # Binarius's name for the n-th pack (stream sections repeat names)
+        return found
 
     def assemble(self):
         out = bytearray()

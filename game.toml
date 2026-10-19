@@ -88,6 +88,10 @@ operand_redirects = [
 # bytes. The HUD centre (320.0) six HUD set-ups store is read from a slot
 # core.nfsc fills; the game's own widescreen HUD layout is forced on.
 instruction_patches = [
+    # Track streaming pool (sized in 006b6e00, made by 007a42e0) 48 MB bigger: the HD UI's barrier arrows
+    # (two 2048x2048 ARGB textures in the shared section Y0 of STREAML5RA.BUN) add about 45 MB to it.
+    { at = 0x006b6ef2, text = "MOV EBX,0x475c000" },
+    { at = 0x006b6ef9, text = "MOV EBX,0x471c000" },
     { at = 0x00598db9, text = "MOV dword ptr [ESP + 0x84],dword ptr [0x00c2b418]" },
     { at = 0x00598fb0, text = "MOV dword ptr [ESP + 0xc4],dword ptr [0x00c2b418]" },
     { at = 0x0059940f, text = "MOV dword ptr [ESP + 0x84],dword ptr [0x00c2b418]" },
