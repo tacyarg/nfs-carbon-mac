@@ -40,7 +40,9 @@ icons).
   - Graphics: full screen, borderless or windowed; render resolution (Sharpest, Balanced,
     Fastest); frame limit (original, 40, 60, or an experimental 120 FPS); world texture filtering
     up to 16x anisotropic; a performance overlay with frame times (also F11).
-  - Mods: skip intro movies, hide the closed online modes, and how much you see to the sides.
+  - Mods: skip intro movies, hide the closed online modes, how much you see to the sides, no
+    rubberbanding (opponents don't catch up), and cheats (off by default: infinite nitrous and
+    speedbreaker, engine power, opponent engine power).
   - Controller: console layout on/off and which button names to show (automatic, Xbox,
     PlayStation, Switch Pro).
 - **Controllers** (a port of NFS-XtendedInput): the console layout (RT gas, LT brake, A handbrake,
@@ -50,7 +52,8 @@ icons).
 - **HD menus, HUD and fonts** (optional, a checkbox in the Setup app): NFS Carbon Remastered UI by
   BadassBaboon, downloaded from nfsmods.xyz and installed into the app's own copy of the game, with
   the fonts and cursor kept at their original size as Aero_'s HD Content Support does on Windows.
-  The minimap, track maps and crew logos are not HD yet.
+  Menus, HUD, fonts, the world map, minimap and track maps are HD; the barrier arrows on the tracks
+  are not yet. Adds about 1 GB to the app.
 
 
 ## What you need

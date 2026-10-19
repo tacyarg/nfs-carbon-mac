@@ -214,7 +214,7 @@ Explain findings plainly and keep commands copy-pasteable.
   GLOBALA with no binding), or the hd_ui.h size write-back (writes TextureInfo +0x28 every frame
   when sizes differ - try an HD build with hd_ui.h disabled), or text layout code reading the
   bigger font and the career menu entry's text/label logic.
-- STAGE 2 BUILT 2026-10-20, NOT yet run: bun.py CompressedTpk (rows 33310003; parts 0x55441122
+- STAGE 2 CONFIRMED by the user 2026-10-20 (title logo, world map, minimap, track maps, career all fine): bun.py CompressedTpk (rows 33310003; parts 0x55441122
   {unpacked size, stored size to the next part, unpacked pos, stored pos, 0} + JDLZ/HUFF/RAWW block
   (JDLZ size at +12 includes the 16-byte header, HUFF/RAWW's does not); blob = pixels + 0x7C header +
   0x18 format; offsets from the TPK chunk; blobs 0x40-aligned after the 0x78 filler; the header's
