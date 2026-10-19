@@ -62,8 +62,26 @@ static void engine_update(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocati
     cheats_speedbreaker();
 }
 
+/* CATCH-UP (rubberbanding). GRaceParameters' catch-up getter 0063ead0 (thiscall,
+ * no arguments, plain RET, flag in AL) reads race attribute 0x10db04e6 and treats a
+ * race that does not set it as ON; Quick Race's "Catch Up" option writes it
+ * (00626440), career races keep their own. With no_catchup the getter answers off
+ * for every race, so opponents no longer slow down or speed up to stay near you. */
+#define RACE_CATCH_UP 0x0063ead0u
+static void race_catch_up(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocation *inv, void *user) {
+    (void)inv;
+    (void)user;
+    if (setting("no_catchup", 0)) {
+        api->hook_return(api, cpu, cpu->eax & 0xffffff00u, 0);
+        return;
+    }
+    api->call_original(api, cpu->target, cpu);
+}
+
 static void cheats_install(void) {
     cheats_speedbreaker();
     if (install(ENGINE_UPDATE, engine_update, POP_HOOK_REPLACE, 19) != POP_OK)
         log_line("core.nfsc: cheats unavailable (hook 006e3df0)");
+    if (install(RACE_CATCH_UP, race_catch_up, POP_HOOK_REPLACE, 23) != POP_OK)
+        log_line("core.nfsc: catch-up switch unavailable (hook 0063ead0)");
 }
