@@ -18,11 +18,13 @@ guest_root = 'C:\Program Files\EA GAMES\Need for Speed Carbon'
 developer_exe = "original/NFSC.exe"
 # Carbon requires Windows XP or later.
 windows_version = "5.1.2600"
-# 1 GB arena, as the MW port: the two runtime DLLs sit just above the fixed
-# stack/TEB/shim region (0x10000000), the extra heap above them.
-guest_size = 0x40000000
+# Nearly 2 GB arena (the game's own address space on Windows; the MW port uses 1 GB): the two runtime DLLs
+# sit just above the fixed stack/TEB/shim region (0x10000000), the extra heap above them. 1 GB was not enough
+# with the HD UI: loading the HD GlobalB.lzc (21 MB packed, 138 MB unpacked) crashed at 006add0f when the
+# unpack buffer's allocation failed. Only memory the game touches is used.
+guest_size = 0x7ffff000
 heap_extra_base = 0x10100000
-heap_extra_size = 0x2ff00000
+heap_extra_size = 0x6feff000
 
 [translate]
 listings = "analysis/decompiled/NFSC.exe"
