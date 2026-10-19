@@ -64,3 +64,5 @@ Third-party work this port reimplements:
   github.com/nlgxzef/Endscript, github.com/nlgxzef/Darius). What Aero_'s NFSHDContentSupport
   (GPL-3) does for fonts and the cursor is reimplemented in mods/core/nfsc/hd_ui.h; none of its
   code is used.
+  The HUFF (EA Huffman) decoder in tools/setup_kit/bun.py comes from the Need for Speed: Most
+  Wanted Mac port's tools/setup_kit/tpk.py.

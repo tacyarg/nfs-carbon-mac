@@ -12,6 +12,7 @@ from pathlib import Path
 
 TPK, TPK_INFO, TPK_DATA = 0xB3300000, 0xB3310000, 0xB3320000
 INFO_HEADER, INFO_KEYS, INFO_TEXTURES, INFO_FORMATS = 0x33310001, 0x33310002, 0x33310004, 0x33310005
+INFO_SLOTS, PART_MAGIC = 0x33310003, 0x55441122
 DATA_HEADER, DATA_PIXELS = 0x33320001, 0x33320002
 ALIGN = 0x80
 
@@ -42,6 +43,144 @@ def jdlz_decompress(src):
             i += 1
         f1 >>= 1
     return bytes(out)
+
+
+# HUFF (EA's canonical Huffman codec) decoder: from the Need for Speed: Most Wanted Mac port
+# (github.com/elforeign/nfs-most-wanted-mac, tools/setup_kit/tpk.py, MIT; see NOTICE).
+class Bits:
+    """Big-endian bit reader for HUFF."""
+    def __init__(self, data):
+        self.data, self.at, self.value, self.count = data, 0, 0, 0
+
+    def peek(self, size):
+        while self.count < size and self.at < len(self.data):
+            self.value = (self.value << 8) | self.data[self.at]
+            self.count += 8
+            self.at += 1
+        if self.count < size:
+            return self.value << (size - self.count)
+        return self.value >> (self.count - size)
+
+    def get(self, size):
+        result = self.peek(size)
+        if self.count < size:
+            raise ValueError("truncated bitstream")
+        self.count -= size
+        self.value &= (1 << self.count) - 1
+        return result
+
+    def number(self):
+        width = 2
+        while not self.get(1):
+            width += 1
+            if width > 30:
+                raise ValueError("unbounded variable number")
+        return self.get(width) + (1 << width) - 4
+
+
+def huff_decompress(data, max_output_bytes=64 << 20):
+    """HUFF (EA's canonical Huffman packing, 'HUFF' 01 10; its stored size excludes the 16-byte header, unlike JDLZ):
+    the code table, the symbol order, the coded bytes with a clue symbol for runs and literals, and the optional
+    delta passes. Every size and table is bounded; anything malformed raises ValueError."""
+    if len(data) < 16 or data[:6] != b"HUFF\x01\x10":
+        raise ValueError("unsupported HUFF header")
+    expected, compressed = struct.unpack_from("<II", data, 8)
+    if not 0 < expected <= max_output_bytes or not 0 < compressed <= len(data) - 16:
+        raise ValueError("invalid bounded sizes")
+    bits = Bits(data[16:16 + compressed])
+    kind = bits.get(16)
+    if kind & 0x100:
+        bits.get(32 if kind & 0x8000 else 24)
+    kind &= ~0x100
+    if kind not in (0x30FB, 0x32FB, 0x34FB, 0xB0FB, 0xB2FB, 0xB4FB):
+        raise ValueError(f"unsupported coding {kind:04x}")
+    count = bits.get(32 if kind & 0x8000 else 24)
+    if count != expected:
+        raise ValueError("inner/outer output-size mismatch")
+    clue = bits.get(8)
+    entries, base, total = [], 0, 0
+    for width in range(1, 17):
+        base <<= 1
+        n = bits.number()
+        if total + n > 256 or base + n > 1 << width:
+            raise ValueError("invalid canonical code table")
+        entries.append((width, base, n))
+        base += n
+        total += n
+        if base == 1 << width:
+            break
+    else:
+        raise ValueError("incomplete canonical code table")
+    used, symbols, current = set(), [], 255
+    for _ in range(total):
+        skip = bits.number() + 1
+        if skip > 256 - len(used):
+            raise ValueError("invalid symbol permutation")
+        while skip:
+            current = (current + 1) & 255
+            if current not in used:
+                skip -= 1
+        used.add(current)
+        symbols.append(current)
+    quick = [None] * 256
+    full, cursor = {}, 0
+    for width, start, n in entries:
+        for code in range(start, start + n):
+            symbol = symbols[cursor]
+            cursor += 1
+            full[width, code] = symbol
+            if width <= 8:
+                for i in range(code << (8 - width), (code + 1) << (8 - width)):
+                    quick[i] = width, symbol
+    output = bytearray()
+    while True:
+        entry = quick[bits.peek(8)]
+        if entry is None:
+            for width in range(9, 17):
+                symbol = full.get((width, bits.peek(width)))
+                if symbol is not None:
+                    bits.get(width)
+                    break
+            else:
+                raise ValueError("unassigned code")
+        else:
+            width, symbol = entry
+            bits.get(width)
+        if symbol != clue:
+            output.append(symbol)
+        else:
+            run = bits.number()
+            if run:
+                if not output or len(output) + run > expected:
+                    raise ValueError("invalid repeat")
+                output.extend(bytes([output[-1]]) * run)
+            elif bits.get(1):
+                break
+            else:
+                output.append(bits.get(8))
+        if len(output) > expected:
+            raise ValueError("output overrun")
+    if len(output) != expected:
+        raise ValueError("early terminator")
+    if kind in (0x32FB, 0xB2FB, 0x34FB, 0xB4FB):
+        value = second = 0
+        for i, delta in enumerate(output):
+            value = (value + delta) & 255
+            second = (second + value) & 255
+            output[i] = second if kind in (0x34FB, 0xB4FB) else value
+    return bytes(output)
+
+
+
+def unpack_block(blk):
+    """One packed block (JDLZ or HUFF, 16-byte header)."""
+    if blk[:4] == b"JDLZ":
+        return jdlz_decompress(blk)
+    if blk[:4] == b"HUFF":
+        return huff_decompress(blk)
+    if blk[:4] == b"RAWW":
+        return blk[16:16 + struct.unpack_from("<I", blk, 8)[0]]
+    raise ValueError(f"unknown block codec {blk[:4]!r}")
 
 
 def load(path):
@@ -170,6 +309,119 @@ class Tpk:
         return bytes(out)
 
 
+class CompressedTpk:
+    """A TPK whose textures are each packed in parts (the 33310003 rows; DYNTEX.BIN, WMDYNTEX.BIN, the minimaps,
+    TRACKMAPS.BIN). A row is {name hash, offset from the TPK chunk, stored size, unpacked size, user flags, flags
+    (2 = by parts), ref count, 0}. A texture's parts are {0x55441122, unpacked size, stored size (to the next part),
+    unpacked position, stored position, 0} + a JDLZ/HUFF/RAWW block; unpacked, they are its pixels followed by its
+    0x7C-byte header and 0x18-byte format entry. Unchanged textures are written back as they were; changed or new
+    ones as RAWW (stored) parts of up to 32 KB, the header in its own part, part 0 last - the originals' order."""
+
+    PART = 0x8000
+
+    def __init__(self, d, o, size):
+        self.base = o - 8
+        self.info_header = self.data_header = None
+        self.extra_info, rows = [], None
+        for cid, p, sz in chunks(d, o, o + size):
+            if cid == TPK_INFO:
+                for c2, p2, s2 in chunks(d, p, p + sz):
+                    if c2 == INFO_HEADER:
+                        self.info_header = d[p2:p2 + s2]
+                    elif c2 == INFO_SLOTS:
+                        rows = (p2, s2)
+                    elif c2 != INFO_KEYS:
+                        self.extra_info.append((c2, d[p2:p2 + s2]))
+            elif cid == TPK_DATA:
+                for c2, p2, s2 in chunks(d, p, p + sz):
+                    if c2 == DATA_HEADER:
+                        self.data_header = d[p2:p2 + s2]
+        if self.info_header is None or rows is None or self.data_header is None:
+            raise ValueError("not a compressed TPK")
+        self.textures = []
+        for i in range(rows[1] // 24):
+            key, off, stored, unpacked = struct.unpack_from("<4I", d, rows[0] + 24 * i)
+            flags = d[rows[0] + 24 * i + 16:rows[0] + 24 * i + 24]
+            raw = d[self.base + off:self.base + off + stored]
+            parts, pos = [], 0
+            while pos < len(raw):
+                if struct.unpack_from("<I", raw, pos)[0] != PART_MAGIC:
+                    pos += 4
+                    continue
+                _, out_size, step, out_pos, _, _ = struct.unpack_from("<6I", raw, pos)
+                blk = raw[pos + 24:]
+                n = struct.unpack_from("<I", blk, 12)[0] + (0 if blk[4] == 2 else 16)
+                parts.append((out_pos, unpack_block(blk[:n])))
+                pos += step
+            blob = b"".join(b for _, b in sorted(parts, key=lambda x: x[0]))
+            if len(blob) != unpacked or len(blob) < 0x94:
+                raise ValueError(f"texture {key:08x}: unpacked {len(blob)} bytes, expected {unpacked}")
+            t = Texture(blob[-0x94:-0x18], blob[-0x18:], blob[:-0x94])
+            t.raw, t.flags, t.offset = raw, flags, off
+            t.original = (bytes(t.header), bytes(t.fmt), t.data)
+            self.textures.append(t)
+
+    @property
+    def collection(self):
+        return self.info_header[4:4 + 0x1C].split(b"\0")[0].decode("latin-1")
+
+    def _parts(self, t):
+        """RAWW parts for a changed texture."""
+        header = bytearray(t.header[:0x7C].ljust(0x7C, b"\0"))
+        pieces = [(i, t.data[i:i + self.PART]) for i in range(self.PART, len(t.data), self.PART)]
+        pieces.append((len(t.data), bytes(header) + bytes(t.fmt)))
+        pieces.append((0, t.data[:self.PART]))
+        out = bytearray()
+        for pos, piece in pieces:
+            block = b"RAWW\x01\x10\0\0" + struct.pack("<II", len(piece), len(piece)) + piece
+            step = 24 + len(block) + (-len(block) % 4)
+            out += struct.pack("<6I", PART_MAGIC, len(piece), step, pos, len(out), 0) + block + bytes(-len(block) % 4)
+        return bytes(out)
+
+    def assemble(self, position):
+        changed = [t for t in self.textures if getattr(t, "raw", None) is None or
+                   (bytes(t.header), bytes(t.fmt), t.data) != t.original]
+        # Changed or new textures get offsets past every unchanged one (the headers' combined layout).
+        end = max([struct.unpack_from("<I", t.header, 20)[0] + len(t.data) for t in self.textures
+                   if t not in changed] or [0])
+        for t in changed:
+            end += -end % 0x1000
+            struct.pack_into("<iiii", t.header, 20, end, -1, len(t.data), 0)
+            end += len(t.data)
+        blobs = {id(t): (t.raw if t not in changed else self._parts(t)) for t in self.textures}
+        order = sorted([t for t in self.textures if t not in changed], key=lambda t: t.offset) + changed
+        self.textures.sort(key=lambda t: t.key)
+        info = bytearray()
+        for cid, payload in [(INFO_HEADER, self.info_header),
+                             (INFO_KEYS, b"".join(struct.pack("<II", t.key, 0) for t in self.textures)),
+                             (INFO_SLOTS, None)] + self.extra_info:
+            if cid == INFO_SLOTS:
+                slots_at = len(info) + 8
+                payload = bytes(24 * len(self.textures))
+            info += struct.pack("<II", cid, len(payload)) + payload
+        body = bytearray(struct.pack("<II", 0, 0x30) + bytes(0x30))
+        info_at = len(body) + 8
+        body += struct.pack("<II", TPK_INFO, len(info)) + info
+        body += padding(position + 8 + len(body))
+        data = bytearray(struct.pack("<II", DATA_HEADER, len(self.data_header)) + self.data_header)
+        data += struct.pack("<II", 0, 0x50) + bytes(0x50)
+        pixels_at = 8 + len(body) + 8 + len(data) + 8   # the pixel payload, from the TPK chunk start
+        pixels = bytearray(struct.pack("<I", 0x11111111) * 30)
+        where = {}
+        for t in order:
+            pixels += bytes(-(pixels_at + len(pixels)) % 0x40)
+            where[id(t)] = pixels_at + len(pixels)
+            pixels += blobs[id(t)]
+        pixels += bytes(-(pixels_at + len(pixels)) % 0x40)
+        data += struct.pack("<II", DATA_PIXELS, len(pixels)) + pixels
+        body += struct.pack("<II", TPK_DATA, len(data)) + data
+        for i, t in enumerate(self.textures):
+            row = struct.pack("<4I", t.key, where[id(t)], len(blobs[id(t)]), len(t.data) + 0x94)
+            row += bytes(t.flags) if t not in changed or getattr(t, "raw", None) is not None else bytes([0, 2, 0, 0, 0, 0, 0, 0])
+            body[info_at + slots_at + 24 * i:info_at + slots_at + 24 * (i + 1)] = row
+        return struct.pack("<II", TPK, len(body)) + bytes(body)
+
+
 class ChunkFile:
     """A chunk file: top-level chunks kept as bytes, TPKs parsed. Filler chunks (id 0) are rebuilt on write
     so every other chunk keeps the start alignment (mod 0x80) it had."""
@@ -182,17 +434,21 @@ class ChunkFile:
             raw = data[p - 8:p + size]
             item = raw
             if cid == TPK:
-                try:
-                    item = Tpk(data, p, size)
-                except ValueError:
-                    item = raw
+                for kind in (Tpk, CompressedTpk):
+                    try:
+                        item = kind(data, p, size)
+                        break
+                    except ValueError:
+                        item = raw
             self.items.append(((p - 8) % ALIGN, item))
 
     def tpks(self):
-        return [item for _, item in self.items if isinstance(item, Tpk)]
+        return [item for _, item in self.items if isinstance(item, (Tpk, CompressedTpk))]
 
     def tpk(self, collection):
-        return next((t for t in self.tpks() if t.collection.lower() == collection.lower()), None)
+        # The stored name has room for 27 characters (MINI_MAP_CASINOTOWN_UNLOCKED is kept as ..._UNLOCKE).
+        want = collection.lower()[:0x1B]
+        return next((t for t in self.tpks() if t.collection.lower()[:0x1B] == want), None)
 
     def assemble(self):
         out = bytearray()
@@ -202,7 +458,7 @@ class ChunkFile:
                 if gap < 8:
                     gap += ALIGN
                 out += struct.pack("<II", 0, gap - 8) + bytes(gap - 8)
-            out += item.assemble(len(out)) if isinstance(item, Tpk) else item
+            out += item.assemble(len(out)) if isinstance(item, (Tpk, CompressedTpk)) else item
         return bytes(out)
 
 

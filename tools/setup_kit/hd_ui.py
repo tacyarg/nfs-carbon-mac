@@ -31,7 +31,7 @@ URL = "https://nfsmods.xyz/uploads/mods/1095/f096ab-Remastered-Textures-4-4.7z"
 SHA256 = "e55c7d8ebbdf6e4332e54ef3c77292b5a89875e19e550b66f39ca7fdee7c66ab"
 CACHE = Path.home() / "Library/Caches/NFS Carbon Setup"
 BASE_GAME = "Vanilla Carbon (Unmodded)"
-FNG_PACKAGE = 0x30203
+FNG_PACKAGE, FNG_PACKAGE_PACKED = 0x30203, 0x30210
 
 # DDS pixel format -> (header compression byte, format-table value)
 FORMATS = {b"DXT1": (0x22, b"DXT1"), b"DXT3": (0x24, b"DXT3"), b"DXT5": (0x26, b"DXT5"),
@@ -82,6 +82,12 @@ def without_entries(data, hashes):
         blob += chunk + bytes(-len(chunk) % 16)
         offset += len(chunk) + (-len(chunk) % 16)
     return data[:12] + struct.pack("<I", len(keep)) + index + bytes(start - 16 - len(index)) + blob
+
+
+# update_collection FILE Tracks NUMBER FIELD VALUE: track records (chunk 0x34201, 0x110 bytes each, the track number
+# a uint16 at +0x8a; Darius Support.Carbon/Class/Track.cs). Only the map calibration the mod sets.
+TRACKS_CHUNK, TRACK_SIZE = 0x34201, 0x110
+TRACK_FIELDS = {"TrackMapCalibrationOffsetX": 0xAC, "TrackMapCalibrationOffsetY": 0xB0, "TrackMapCalibrationWidth": 0xB4}
 
 
 def binhash(name):
@@ -273,8 +279,11 @@ class Installer:
             self.log(f"  copied {c[4]} -> {dst}")
         elif op == "update_collection":
             if c[2] == "TPKBlocks" and c[4] in ("CompressionType", "CollectionName"):
-                return  # packs are written uncompressed; names already match the vanilla game
-            self.skip("map calibration", c)
+                return  # packs keep their kind; names already match the vanilla game
+            if c[2] == "Tracks" and c[4] in TRACK_FIELDS:
+                self.track_field(c[1], int(c[3]), c[4], float(c[5]), c)
+                return
+            self.skip(f"unsupported collection field {c[2]} {c[4]}", c)
         elif op in ("bind_textures", "replace_texture", "update_texture"):
             mode, rel, collection = (c[1], c[2], c[4]) if op == "bind_textures" else (None, c[1], c[3])
             tpk, why = self.tpk(rel, collection)
@@ -308,22 +317,54 @@ class Installer:
                     struct.pack_into(fmt, t.header, off, value)
                 self.mark(rel)
         elif op == "import":
+            # import synchronize|override FILE FNGroups PACKAGE.bin: the mod's package (a raw 0x30203 chunk) replaces
+            # the package of the same name in FILE, stored raw (0x30203) or JDLZ-packed (0x30210, a hash + JDLZ).
             mode, rel, kind, src = c[1], c[2], c[3], self.assets / c[4]
             data = src.read_bytes()
             name = re.search(rb"[A-Za-z0-9_]+\.fng", data[:0x100])
+            if not name:
+                self.skip("package without a name", c)
+                return
+            want = name.group().lower()
             f = self.file(rel)
             for i, (phase, item) in enumerate(f.items):
-                if isinstance(item, bytes) and struct.unpack_from("<I", item)[0] == FNG_PACKAGE and name and \
-                        name.group().lower() in item[:0x100].lower():
+                if not isinstance(item, bytes):
+                    continue
+                cid = struct.unpack_from("<I", item)[0]
+                head = item[8:0x108] if cid == FNG_PACKAGE else None
+                if cid == FNG_PACKAGE_PACKED:
+                    try:
+                        head = bun.jdlz_decompress(item[12:])[:0x100]
+                    except (IndexError, ValueError):
+                        head = None
+                if head is not None and want in head.lower():
                     f.items[i] = (phase, data)
                     self.mark(rel)
                     self.log(f"  layout {name.group().decode()} replaced in {rel}")
                     return
-            self.skip("package import into a new file", c)
+            if mode == "override":
+                f.items.append((0, data))
+                self.mark(rel)
+                self.log(f"  layout {name.group().decode()} added to {rel}")
+                return
+            self.skip("package not in that file", c)
         elif op == "delete":
             self.skip("streamed track textures", c)
         else:
             self.skip(f"unsupported command {op}", c)
+
+    def track_field(self, rel, number, field, value, cmd):
+        f = self.file(rel)
+        for i, (phase, item) in enumerate(f.items):
+            if isinstance(item, bytes) and struct.unpack_from("<I", item)[0] == TRACKS_CHUNK:
+                rec = bytearray(item)
+                for at in range(8, len(rec) - TRACK_SIZE + 1, TRACK_SIZE):
+                    if struct.unpack_from("<H", rec, at + 0x8A)[0] == number:
+                        struct.pack_into("<f", rec, at + TRACK_FIELDS[field], value)
+                        f.items[i] = (phase, bytes(rec))
+                        self.mark(rel)
+                        return
+        self.skip("track not found", cmd)
 
     def mark(self, rel):
         self.files[rel.upper()].dirty = True

@@ -214,6 +214,20 @@ Explain findings plainly and keep commands copy-pasteable.
   GLOBALA with no binding), or the hd_ui.h size write-back (writes TextureInfo +0x28 every frame
   when sizes differ - try an HD build with hd_ui.h disabled), or text layout code reading the
   bigger font and the career menu entry's text/label logic.
+- STAGE 2 BUILT 2026-10-20, NOT yet run: bun.py CompressedTpk (rows 33310003; parts 0x55441122
+  {unpacked size, stored size to the next part, unpacked pos, stored pos, 0} + JDLZ/HUFF/RAWW block
+  (JDLZ size at +12 includes the 16-byte header, HUFF/RAWW's does not); blob = pixels + 0x7C header +
+  0x18 format; offsets from the TPK chunk; blobs 0x40-aligned after the 0x78 filler; the header's
+  +20 offset is a combined-layout position). Unchanged textures are copied as stored (round trip
+  byte-identical for DYNTEX, WMDYNTEX, TRACKMAPS, both minimaps); changed/new ones are RAWW parts
+  of <= 32 KB, header part, part 0 last, new offsets after the last unchanged texture. HUFF decoder
+  from the MW port's tools/setup_kit/tpk.py. Collection names match on 27 chars (stored name
+  limit). import replaces raw (0x30203) or packed (0x30210 = hash + JDLZ) packages
+  (WorldMapMain.fng in GlobalB); update_collection Tracks N TrackMapCalibration* (records 0x110 in
+  chunk 0x34201, number at +0x8a, X/Y/Width at +0xac/+0xb0/+0xb4; vanilla already 105/-4150/6300).
+  RAWW storage makes DYNTEX 50 MB, WMDYNTEX 154 MB, minimaps ~108 MB each, TRACKMAPS 101 MB
+  (a JDLZ compressor would shrink them). Still skipped: streamed L5RA textures (barrier arrows,
+  unpack_stream/pack_stream).
 - Order of work: (1) whole-file copies (GLOBALA/FRONTB2 per language) + uncompressed TPKs (FRONTB1,
   GLOBALA, INGAMEA, INGAMEB, GLOBALB) + font/cursor original-size fix in core.nfsc + Setup checkbox;
   (2) compressed TPKs + FNG imports + NIS; (3) the optional extras (2015 minimap etc.).
