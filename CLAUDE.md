@@ -223,7 +223,12 @@ Explain findings plainly and keep commands copy-pasteable.
   of <= 32 KB, header part, part 0 last. The header +20 offsets MUST run on in stored order, 0x80-
   aligned (all retail files do; the game unpacks a pack into one buffer at those offsets). The first
   stage-2 build appended bigger textures past the old end -> overflow: garbled 2x title logo
-  (XENON_WS_SPLASH_SCREEN in DYNTEX) and a hang on opening the world map (2026-10-20). Now every
+  (XENON_WS_SPLASH_SCREEN in DYNTEX) and a hang on opening the world map (2026-10-20). SECOND cause (live lldb on the world-map hang, 2026-10-20): a by-parts
+  texture is read into a buffer of its UNPACKED size (0055b8d0) and unpacked in place backwards (006aaba0), so
+  stored parts bigger than the texture (our RAWW parts: +40 bytes per 32 KB) overflowed it (0x6410 bytes over a
+  4096^2 TRACK_MAP, into the TPK list 0xa9017c -> endless loop in 0055ebd0). Changed textures are now stored
+  PLAIN (row flags byte +0x11 = 0: stored bytes = the unpacked blob, 0055b710 skips decoding); moved ones keep
+  their parts only if CompressedTpk.fits_in_place (all 398 retail textures pass). Now every
   texture is re-laid out; an unchanged one whose offset moved keeps its stored parts except the
   one holding its header, rewritten as RAWW. HUFF decoder
   from the MW port's tools/setup_kit/tpk.py. Collection names match on 27 chars (stored name

@@ -315,9 +315,9 @@ class CompressedTpk:
     (2 = by parts), ref count, 0}. A texture's parts are {0x55441122, unpacked size, stored size (to the next part),
     unpacked position, stored position, 0} + a JDLZ/HUFF/RAWW block; unpacked, they are its pixels followed by its
     0x7C-byte header and 0x18-byte format entry. Unchanged textures are written back as they were; changed or new
-    ones as RAWW (stored) parts of up to 32 KB, the header in its own part, part 0 last - the originals' order."""
-
-    PART = 0x8000
+    ones plain (row flags 0: the stored bytes are the unpacked texture). The game reads a by-parts texture into a
+    buffer of its unpacked size and unpacks it there in place (0055b8d0, 006aaba0), so stored parts must never be
+    bigger than what they unpack to: uncompressed (RAWW) parts are, and overflowed that buffer."""
 
     def __init__(self, d, o, size):
         self.base = o - 8
@@ -344,6 +344,8 @@ class CompressedTpk:
             flags = d[rows[0] + 24 * i + 16:rows[0] + 24 * i + 24]
             raw = d[self.base + off:self.base + off + stored]
             parts, stored, pos = [], [], 0
+            if flags[1] == 0:   # plain
+                parts, pos = [(0, raw[:unpacked])], len(raw)
             while pos < len(raw):
                 if struct.unpack_from("<I", raw, pos)[0] != PART_MAGIC:
                     pos += 4
@@ -366,14 +368,6 @@ class CompressedTpk:
     def collection(self):
         return self.info_header[4:4 + 0x1C].split(b"\0")[0].decode("latin-1")
 
-    def _parts(self, t):
-        """RAWW parts for a changed texture: 32 KB pieces, the header in its own part, part 0 last."""
-        header = bytes(t.header[:0x7C].ljust(0x7C, b"\0")) + bytes(t.fmt)
-        pieces = [(i, t.data[i:i + self.PART]) for i in range(self.PART, len(t.data), self.PART)]
-        pieces.append((len(t.data), header))
-        pieces.append((0, t.data[:self.PART]))
-        return self._restamp([(pos, self._raww_part(piece, pos)) for pos, piece in pieces])
-
     @staticmethod
     def _raww_part(piece, out_pos):
         block = b"RAWW\x01\x10\0\0" + struct.pack("<II", len(piece), len(piece)) + piece
@@ -382,11 +376,28 @@ class CompressedTpk:
 
     def _with_header(self, t):
         """An unchanged texture whose header moved: its stored parts as they were, except the one holding the
-        header (the last unpacked bytes), rewritten as RAWW with the new header."""
+        header (the last unpacked bytes), rewritten as RAWW with the new header. None if the result would not
+        unpack in place (see fits_in_place)."""
+        if not t.stored:
+            return None
         last = max(t.stored, key=lambda x: x[0])
         head = (t.data + bytes(t.header[:0x7C].ljust(0x7C, b"\0")) + bytes(t.fmt))[last[0]:]
         parts = [(pos, raw if (pos, size, raw) != last else self._raww_part(head, pos)) for pos, size, raw in t.stored]
-        return self._restamp(parts)
+        blob = self._restamp(parts)
+        return blob if self.fits_in_place(blob, len(t.data) + 0x94) else None
+
+    @staticmethod
+    def fits_in_place(blob, unpacked):
+        """006aaba0's in-place unpack works: the stored parts fit the unpacked-size buffer, and unpacking them
+        backwards (the last stored part, part 0, from a copy) never writes over a part not yet unpacked."""
+        if len(blob) > unpacked:
+            return False
+        pos, parts = 0, []
+        while pos < len(blob):
+            _, size, step, out_pos = struct.unpack_from("<4I", blob, pos)
+            parts.append((pos, step, out_pos, size))
+            pos += step
+        return all(out_pos >= at + step and out_pos + size <= unpacked for at, step, out_pos, size in parts[:-1])
 
     @staticmethod
     def _restamp(parts):
@@ -411,14 +422,15 @@ class CompressedTpk:
                 moved.append(t)
             struct.pack_into("<iiii", t.header, 20, offset, -1, len(t.data), 0)
             offset += len(t.data) + (-len(t.data) % 0x80)
-        blobs = {}
+        blobs, plain = {}, set()
         for t in self.textures:
-            if t in changed:
-                blobs[id(t)] = self._parts(t)
-            elif t in moved:
+            if t in moved:
                 blobs[id(t)] = self._with_header(t)
-            else:
+            elif t not in changed:
                 blobs[id(t)] = t.raw
+            if blobs.get(id(t)) is None:   # plain: the unpacked bytes themselves
+                plain.add(id(t))
+                blobs[id(t)] = t.data + bytes(t.header[:0x7C].ljust(0x7C, b"\0")) + bytes(t.fmt)
         self.textures.sort(key=lambda t: t.key)
         info = bytearray()
         for cid, payload in [(INFO_HEADER, self.info_header),
@@ -446,7 +458,9 @@ class CompressedTpk:
         body += struct.pack("<II", TPK_DATA, len(data)) + data
         for i, t in enumerate(self.textures):
             row = struct.pack("<4I", t.key, where[id(t)], len(blobs[id(t)]), len(t.data) + 0x94)
-            row += bytes(t.flags) if t not in changed or getattr(t, "raw", None) is not None else bytes([0, 2, 0, 0, 0, 0, 0, 0])
+            flags = bytearray(t.flags if getattr(t, "raw", None) is not None else bytes(8))
+            flags[1] = 0 if id(t) in plain else 2
+            row += bytes(flags)
             body[info_at + slots_at + 24 * i:info_at + slots_at + 24 * (i + 1)] = row
         return struct.pack("<II", TPK, len(body)) + bytes(body)
 

@@ -7,9 +7,8 @@ This runs the same script with a small Endscript interpreter (commands as in End
 github.com/nlgxzef/Endscript) and the TPK writer in bun.py, against GAME_COPY - the app's own copy, never the
 player's folder. The archive is downloaded once (pinned SHA-256) into ~/Library/Caches/NFS Carbon Setup.
 
-Not done yet (logged as "skipped"): compressed TPKs (DYNTEX.BIN, WMDYNTEX.BIN, the minimaps, TRACKMAPS.BIN),
-the streamed track textures (unpack_stream ... pack_stream), packages imported into a file that lacks them, and
-map calibration. Optional extras (checkbox blocks) take their "disabled" branch.
+Not done yet (logged as "skipped"): the streamed track textures (unpack_stream ... pack_stream) and packages
+imported into a file that lacks them. Optional extras (checkbox blocks) take their "disabled" branch.
 """
 import argparse
 import hashlib
