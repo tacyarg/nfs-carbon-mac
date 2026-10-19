@@ -220,7 +220,12 @@ Explain findings plainly and keep commands copy-pasteable.
   0x18 format; offsets from the TPK chunk; blobs 0x40-aligned after the 0x78 filler; the header's
   +20 offset is a combined-layout position). Unchanged textures are copied as stored (round trip
   byte-identical for DYNTEX, WMDYNTEX, TRACKMAPS, both minimaps); changed/new ones are RAWW parts
-  of <= 32 KB, header part, part 0 last, new offsets after the last unchanged texture. HUFF decoder
+  of <= 32 KB, header part, part 0 last. The header +20 offsets MUST run on in stored order, 0x80-
+  aligned (all retail files do; the game unpacks a pack into one buffer at those offsets). The first
+  stage-2 build appended bigger textures past the old end -> overflow: garbled 2x title logo
+  (XENON_WS_SPLASH_SCREEN in DYNTEX) and a hang on opening the world map (2026-10-20). Now every
+  texture is re-laid out; an unchanged one whose offset moved keeps its stored parts except the
+  one holding its header, rewritten as RAWW. HUFF decoder
   from the MW port's tools/setup_kit/tpk.py. Collection names match on 27 chars (stored name
   limit). import replaces raw (0x30203) or packed (0x30210 = hash + JDLZ) packages
   (WorldMapMain.fng in GlobalB); update_collection Tracks N TrackMapCalibration* (records 0x110 in

@@ -343,7 +343,7 @@ class CompressedTpk:
             key, off, stored, unpacked = struct.unpack_from("<4I", d, rows[0] + 24 * i)
             flags = d[rows[0] + 24 * i + 16:rows[0] + 24 * i + 24]
             raw = d[self.base + off:self.base + off + stored]
-            parts, pos = [], 0
+            parts, stored, pos = [], [], 0
             while pos < len(raw):
                 if struct.unpack_from("<I", raw, pos)[0] != PART_MAGIC:
                     pos += 4
@@ -352,12 +352,13 @@ class CompressedTpk:
                 blk = raw[pos + 24:]
                 n = struct.unpack_from("<I", blk, 12)[0] + (0 if blk[4] == 2 else 16)
                 parts.append((out_pos, unpack_block(blk[:n])))
+                stored.append((out_pos, out_size, raw[pos:pos + step]))
                 pos += step
             blob = b"".join(b for _, b in sorted(parts, key=lambda x: x[0]))
             if len(blob) != unpacked or len(blob) < 0x94:
                 raise ValueError(f"texture {key:08x}: unpacked {len(blob)} bytes, expected {unpacked}")
             t = Texture(blob[-0x94:-0x18], blob[-0x18:], blob[:-0x94])
-            t.raw, t.flags, t.offset = raw, flags, off
+            t.raw, t.flags, t.offset, t.stored = raw, flags, off, stored
             t.original = (bytes(t.header), bytes(t.fmt), t.data)
             self.textures.append(t)
 
@@ -366,30 +367,58 @@ class CompressedTpk:
         return self.info_header[4:4 + 0x1C].split(b"\0")[0].decode("latin-1")
 
     def _parts(self, t):
-        """RAWW parts for a changed texture."""
-        header = bytearray(t.header[:0x7C].ljust(0x7C, b"\0"))
+        """RAWW parts for a changed texture: 32 KB pieces, the header in its own part, part 0 last."""
+        header = bytes(t.header[:0x7C].ljust(0x7C, b"\0")) + bytes(t.fmt)
         pieces = [(i, t.data[i:i + self.PART]) for i in range(self.PART, len(t.data), self.PART)]
-        pieces.append((len(t.data), bytes(header) + bytes(t.fmt)))
+        pieces.append((len(t.data), header))
         pieces.append((0, t.data[:self.PART]))
+        return self._restamp([(pos, self._raww_part(piece, pos)) for pos, piece in pieces])
+
+    @staticmethod
+    def _raww_part(piece, out_pos):
+        block = b"RAWW\x01\x10\0\0" + struct.pack("<II", len(piece), len(piece)) + piece
+        block += bytes(-len(block) % 4)
+        return struct.pack("<6I", PART_MAGIC, len(piece), 24 + len(block), out_pos, 0, 0) + block
+
+    def _with_header(self, t):
+        """An unchanged texture whose header moved: its stored parts as they were, except the one holding the
+        header (the last unpacked bytes), rewritten as RAWW with the new header."""
+        last = max(t.stored, key=lambda x: x[0])
+        head = (t.data + bytes(t.header[:0x7C].ljust(0x7C, b"\0")) + bytes(t.fmt))[last[0]:]
+        parts = [(pos, raw if (pos, size, raw) != last else self._raww_part(head, pos)) for pos, size, raw in t.stored]
+        return self._restamp(parts)
+
+    @staticmethod
+    def _restamp(parts):
+        """Parts in their stored order with their stored positions (+16) recomputed."""
         out = bytearray()
-        for pos, piece in pieces:
-            block = b"RAWW\x01\x10\0\0" + struct.pack("<II", len(piece), len(piece)) + piece
-            step = 24 + len(block) + (-len(block) % 4)
-            out += struct.pack("<6I", PART_MAGIC, len(piece), step, pos, len(out), 0) + block + bytes(-len(block) % 4)
+        for _, raw in parts:
+            raw = bytearray(raw)
+            struct.pack_into("<I", raw, 16, len(out))
+            out += raw
         return bytes(out)
 
     def assemble(self, position):
         changed = [t for t in self.textures if getattr(t, "raw", None) is None or
                    (bytes(t.header), bytes(t.fmt), t.data) != t.original]
-        # Changed or new textures get offsets past every unchanged one (the headers' combined layout).
-        end = max([struct.unpack_from("<I", t.header, 20)[0] + len(t.data) for t in self.textures
-                   if t not in changed] or [0])
-        for t in changed:
-            end += -end % 0x1000
-            struct.pack_into("<iiii", t.header, 20, end, -1, len(t.data), 0)
-            end += len(t.data)
-        blobs = {id(t): (t.raw if t not in changed else self._parts(t)) for t in self.textures}
-        order = sorted([t for t in self.textures if t not in changed], key=lambda t: t.offset) + changed
+        # The game unpacks a whole pack into one buffer: each texture at its header's offset, the offsets running
+        # on in stored order, 0x80-aligned (every retail file follows this). New textures go last.
+        order = sorted([t for t in self.textures if getattr(t, "raw", None) is not None], key=lambda t: t.offset)
+        order += [t for t in self.textures if getattr(t, "raw", None) is None]
+        offset, moved = 0, []
+        for t in order:
+            if struct.unpack_from("<I", t.header, 20)[0] != offset and t not in changed:
+                moved.append(t)
+            struct.pack_into("<iiii", t.header, 20, offset, -1, len(t.data), 0)
+            offset += len(t.data) + (-len(t.data) % 0x80)
+        blobs = {}
+        for t in self.textures:
+            if t in changed:
+                blobs[id(t)] = self._parts(t)
+            elif t in moved:
+                blobs[id(t)] = self._with_header(t)
+            else:
+                blobs[id(t)] = t.raw
         self.textures.sort(key=lambda t: t.key)
         info = bytearray()
         for cid, payload in [(INFO_HEADER, self.info_header),
