@@ -81,7 +81,7 @@ POP_MOD_DECLARE_ABI();
 #define HUD_RIGHT_GROUP 0x5D0101F1u
 
 static const PopModApi *g_api;
-static uint32_t g_hooks[48];
+static uint32_t g_hooks[24];
 static int g_widescreen = 1;
 static int g_scaling = 1;
 static uint32_t g_w = 1280, g_h = 720;
@@ -124,7 +124,6 @@ static void log_line(const char *text) {
 #include "online.h" /* hide Quick Match / Custom Match */
 #include "rumble.h" /* controller rumble from the game's force-feedback values */
 #include "cheats.h" /* infinite nitrous and speedbreaker */
-#include "options.h" /* the port's settings in the game's Options screens */
 
 /* ---- the resolution list --------------------------------------------------
  * The host scales the frame smoothly to the window, aspect kept (game.toml
@@ -424,11 +423,10 @@ static void localized_wide(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocat
     (void)inv;
     (void)user;
     const uint32_t out = get_u32(cpu->esp + 4), size = get_u32(cpu->esp + 8), hash = get_u32(cpu->esp + 12);
-    const char *option = options_text(hash);
-    for (int i = option ? -1 : 0; i < g_res_count && out && size; ++i) {
-        if (i >= 0 && g_res[i].hash != hash)
+    for (int i = 0; i < g_res_count && out && size; ++i) {
+        if (g_res[i].hash != hash)
             continue;
-        const char *t = i < 0 ? option : g_res[i].label;
+        const char *t = g_res[i].label;
         size_t n = strlen(t);
         if (n + 1 > size)
             n = size - 1;
@@ -514,10 +512,6 @@ PopModStatus pop_mod_init(const PopModApi *api) {
     online_install();
     rumble_install();
     cheats_install();
-    /* Text for the resolution list's labels and the Options rows below. */
-    if (install(LOCALIZED_WIDE, localized_wide, POP_HOOK_REPLACE, 6) != POP_OK)
-        log_line("core.nfsc: menu labels unavailable");
-    options_install(api);
     PopModStatus s = install(SETUP_PROJECTION, setup_projection, POP_HOOK_BEFORE, 0);
     if (s != POP_OK)
         return s;
@@ -526,7 +520,8 @@ PopModStatus pop_mod_init(const PopModApi *api) {
             return s;
         /* The options menu's resolution row; widescreen works without it. */
         if (install(INC_SCREEN_RES, inc_screen_res, POP_HOOK_REPLACE, 4) != POP_OK ||
-            install(RES_LABEL_HASH, res_label_hash, POP_HOOK_REPLACE, 5) != POP_OK)
+            install(RES_LABEL_HASH, res_label_hash, POP_HOOK_REPLACE, 5) != POP_OK ||
+            install(LOCALIZED_WIDE, localized_wide, POP_HOOK_REPLACE, 6) != POP_OK)
             log_line("core.nfsc: the resolution menu is unavailable; widescreen still applies");
         if (api->guest_alloc(api, 8, &g_scratch) != POP_OK)
             g_scratch = 0;
