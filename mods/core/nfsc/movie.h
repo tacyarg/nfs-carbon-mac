@@ -12,8 +12,14 @@
  * Here that one call waits the same way, up to 5 s (ThirteenAG's limit), until
  * audio is buffered or the stream reaches its end state (2, thiscall
  * 008d3cf0), sleeping alertably through the game's own SleepEx import (file
- * reads complete through completion routines). Every movie start is logged with
- * how long it waited, so a wait on a fast drive shows up in the log.
+ * reads complete through completion routines).
+ * Some movies have an audio reader but no audio at all: Attract (the title
+ * screen's background) is only MVhd + MV0F chunks, so ThirteenAG's wait always
+ * ran its full 5 s there (the pause after the intro, measured 2026-10-23). Movies
+ * with audio put SCHl before the first video frame and reads arrive in large
+ * blocks, so once the video reader ([esi+0x19c], same reader class) has data,
+ * audio that has not followed within MOVIE_GRACE_MS means there is none.
+ * Every movie start is logged with how long it waited and why it stopped.
  */
 #include <time.h>
 #define MOVIE_BUFFERED_BYTES 0x008d3ca0u
@@ -21,6 +27,8 @@
 #define MOVIE_START_RET 0x00888917u
 #define IAT_SLEEPEX 0x009c1140u
 #define MOVIE_WAIT_MS 5000.0
+#define MOVIE_GRACE_MS 250.0 /* after the video has data */
+#define MOVIE_VIDEO_READER 0x19cu
 
 static double movie_now_ms(void) {
     struct timespec ts;
@@ -32,10 +40,12 @@ static void movie_wait_for_audio(const PopModApi *api, pop_cpu_v1 *cpu, PopHookI
     (void)inv;
     (void)user;
     const uint32_t reader = cpu->ecx, sleep_ex = get_u32(IAT_SLEEPEX);
+    const uint32_t video = get_u32(cpu->esi + MOVIE_VIDEO_READER);
     uint32_t bytes = 0, state = 0;
     api->guest_call(api, MOVIE_BUFFERED_BYTES, reader, NULL, 0, &bytes);
     const int waited = bytes == 0;
     const double start = movie_now_ms();
+    double video_at = -1.0;
     const char *why = "audio arrived";
     while (bytes == 0) {
         api->guest_call(api, MOVIE_STREAM_STATE, reader, NULL, 0, &state);
@@ -43,7 +53,18 @@ static void movie_wait_for_audio(const PopModApi *api, pop_cpu_v1 *cpu, PopHookI
             why = "stream ended";
             break;
         }
-        if (movie_now_ms() - start >= MOVIE_WAIT_MS || !sleep_ex) {
+        const double now = movie_now_ms();
+        if (video && video_at < 0.0) {
+            uint32_t video_bytes = 0;
+            api->guest_call(api, MOVIE_BUFFERED_BYTES, video, NULL, 0, &video_bytes);
+            if (video_bytes)
+                video_at = now;
+        }
+        if (video_at >= 0.0 && now - video_at >= MOVIE_GRACE_MS) {
+            why = "no audio in this movie";
+            break;
+        }
+        if (now - start >= MOVIE_WAIT_MS || !sleep_ex) {
             why = "gave up";
             break;
         }
