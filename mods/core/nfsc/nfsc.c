@@ -120,6 +120,7 @@ static void log_line(const char *text) {
 #include "fe_pad.h" /* console button prompts in the menus */
 #include "hd_ui.h" /* HD fonts and cursor laid out at their original size */
 #include "intro.h" /* skip the start-up movies */
+#include "movie.h" /* movies wait for their audio (the fix's MoviePlaybackFix) */
 #include "online.h" /* hide Quick Match / Custom Match */
 #include "rumble.h" /* controller rumble from the game's force-feedback values */
 #include "cheats.h" /* infinite nitrous and speedbreaker */
@@ -507,6 +508,7 @@ PopModStatus pop_mod_init(const PopModApi *api) {
     fe_pad_install(api);
     hd_ui_install();
     intro_install();
+    movie_install();
     online_install();
     rumble_install();
     cheats_install();
