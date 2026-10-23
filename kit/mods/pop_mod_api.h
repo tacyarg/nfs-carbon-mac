@@ -312,6 +312,13 @@ struct PopModApi {
      * The game mix changes at the next output period; a movie uses the value
      * current when it opens. Thread-safe; any thread. */
     PopModStatus (*audio_output)(const PopModApi *api, uint32_t mode, uint32_t flags);
+    /* Optional v1 tail. The host's display rows, by key ("window", "frame_limit",
+     * "performance_overlay", "texture_filtering"), the values the settings page
+     * shows. display_set validates, saves and applies like the page does; main
+     * thread only (POP_E_WRONG_THREAD otherwise). POP_E_NOTFOUND: unknown key,
+     * POP_E_STATE: this game does not list that row. */
+    PopModStatus (*display_get)(const PopModApi *api, const char *key, int64_t *out);
+    PopModStatus (*display_set)(const PopModApi *api, const char *key, int64_t value);
 };
 
 #define POP_AUDIO_OUTPUT_MIXER 0u
