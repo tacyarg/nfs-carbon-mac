@@ -15,10 +15,12 @@
  * reads complete through completion routines).
  * Some movies have an audio reader but no audio at all: Attract (the title
  * screen's background) is only MVhd + MV0F chunks, so ThirteenAG's wait always
- * ran its full 5 s there (the pause after the intro, measured 2026-10-23). Movies
- * with audio put SCHl before the first video frame and reads arrive in large
- * blocks, so once the video reader ([esi+0x19c], same reader class) has data,
- * audio that has not followed within MOVIE_GRACE_MS means there is none.
+ * ran its full 5 s there (the pause after the intro, measured 2026-10-23). The
+ * stream ([reader+4]) keeps every chunk read so far in one list at +0x50 in
+ * file order (node: +0 next, +8 size, +0xc chunk bytes, +0x14 reader index;
+ * 008d4740, 008d3bf0, and 00888884 reads the MVhd tag through +0xc). Movies with
+ * audio put SCHl before their first video frame, so a frame (MV0K/MV0F) read
+ * with no SC* chunk before it means the movie has no audio: no wait.
  * Every movie start is logged with how long it waited and why it stopped.
  */
 #include <time.h>
@@ -27,8 +29,10 @@
 #define MOVIE_START_RET 0x00888917u
 #define IAT_SLEEPEX 0x009c1140u
 #define MOVIE_WAIT_MS 5000.0
-#define MOVIE_GRACE_MS 250.0 /* after the video has data */
-#define MOVIE_VIDEO_READER 0x19cu
+#define MOVIE_STREAM_CHUNKS 0x50u
+#define TAG_MV0K 0x4b30564du /* "MV0K" */
+#define TAG_MV0F 0x4630564du /* "MV0F" */
+#define TAG_SC 0x4353u        /* "SC" (SCHl, SCCl, SCDl: audio) */
 
 static double movie_now_ms(void) {
     struct timespec ts;
@@ -36,16 +40,29 @@ static double movie_now_ms(void) {
     return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
 }
 
+/* What the chunks read so far say about the movie's audio: 1 an audio chunk was
+ * read, 0 a video frame came first (no audio track), -1 not known yet. */
+static int movie_has_audio(uint32_t reader) {
+    uint32_t node = get_u32(get_u32(reader + 4) + MOVIE_STREAM_CHUNKS);
+    int frame = 0;
+    for (int i = 0; node && i < 256; ++i, node = get_u32(node)) {
+        const uint32_t tag = get_u32(get_u32(node + 0xc));
+        if ((tag & 0xffffu) == TAG_SC)
+            return 1;
+        if (tag == TAG_MV0K || tag == TAG_MV0F)
+            frame = 1;
+    }
+    return frame ? 0 : -1;
+}
+
 static void movie_wait_for_audio(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocation *inv, void *user) {
     (void)inv;
     (void)user;
     const uint32_t reader = cpu->ecx, sleep_ex = get_u32(IAT_SLEEPEX);
-    const uint32_t video = get_u32(cpu->esi + MOVIE_VIDEO_READER);
     uint32_t bytes = 0, state = 0;
     api->guest_call(api, MOVIE_BUFFERED_BYTES, reader, NULL, 0, &bytes);
     const int waited = bytes == 0;
     const double start = movie_now_ms();
-    double video_at = -1.0;
     const char *why = "audio arrived";
     while (bytes == 0) {
         api->guest_call(api, MOVIE_STREAM_STATE, reader, NULL, 0, &state);
@@ -53,18 +70,11 @@ static void movie_wait_for_audio(const PopModApi *api, pop_cpu_v1 *cpu, PopHookI
             why = "stream ended";
             break;
         }
-        const double now = movie_now_ms();
-        if (video && video_at < 0.0) {
-            uint32_t video_bytes = 0;
-            api->guest_call(api, MOVIE_BUFFERED_BYTES, video, NULL, 0, &video_bytes);
-            if (video_bytes)
-                video_at = now;
-        }
-        if (video_at >= 0.0 && now - video_at >= MOVIE_GRACE_MS) {
+        if (movie_has_audio(reader) == 0) {
             why = "no audio in this movie";
             break;
         }
-        if (now - start >= MOVIE_WAIT_MS || !sleep_ex) {
+        if (movie_now_ms() - start >= MOVIE_WAIT_MS || !sleep_ex) {
             why = "gave up";
             break;
         }
@@ -76,13 +86,15 @@ static void movie_wait_for_audio(const PopModApi *api, pop_cpu_v1 *cpu, PopHookI
     void *p = NULL;
     if (api->guest_ptr(api, 0x00a97a88u, sizeof name - 1, &p) == POP_OK && p)
         memcpy(name, p, sizeof name - 1);
-    char line[160];
+    static const char *const track[] = {"not known yet", "none", "yes"};
+    const char *audio_track = track[movie_has_audio(reader) + 1];
+    char line[192];
     if (waited)
-        snprintf(line, sizeof line, "core.nfsc: movie %s: waited %.0f ms for its audio (%s, %u bytes)",
-                 name[0] ? name : "?", movie_now_ms() - start, why, bytes);
+        snprintf(line, sizeof line, "core.nfsc: movie %s: waited %.0f ms for its audio (%s, %u bytes; audio track: %s)",
+                 name[0] ? name : "?", movie_now_ms() - start, why, bytes, audio_track);
     else
-        snprintf(line, sizeof line, "core.nfsc: movie %s: audio already buffered (%u bytes)", name[0] ? name : "?",
-                 bytes);
+        snprintf(line, sizeof line, "core.nfsc: movie %s: audio already buffered (%u bytes; audio track: %s)",
+                 name[0] ? name : "?", bytes, audio_track);
     log_line(line);
     api->hook_return(api, cpu, bytes, 0); /* thiscall, no arguments */
 }
