@@ -19,7 +19,6 @@
 #include "../platform/os.h"
 #include "../dx/host_api.h"
 
-#include <cstring>
 #include <map>
 #include <stdio.h>
 #include <string>
@@ -274,41 +273,7 @@ void mods_host_services_remove_all(uint32_t owner) {
 
 // Populate host-facing mod services with thread and value validation.
 // Successful registrations retain ownership so teardown can revoke the calling mod resources.
-namespace {
-// The display row a mod names, or -1.
-int display_row(const char *key) {
-    static const struct {
-        const char *key;
-        DisplayRow row;
-    } rows[] = {{"window", DISPLAY_WINDOW},
-                {"frame_limit", DISPLAY_FPS},
-                {"performance_overlay", DISPLAY_OVERLAY},
-                {"texture_filtering", DISPLAY_FILTERING}};
-    for (const auto &r : rows)
-        if (key && !strcmp(key, r.key))
-            return r.row;
-    return -1;
-}
-} // namespace
-
 void mods_fill_host_api(PopModApi *api) {
-    api->display_get = [](const PopModApi *, const char *key, int64_t *out) -> PopModStatus {
-        const int row = display_row(key);
-        if (row < 0 || !out)
-            return row < 0 ? POP_E_NOTFOUND : POP_E_INVAL;
-        if (!mods_settings_row_listed(row))
-            return POP_E_STATE;
-        *out = mods_display_value(DisplayRow(row));
-        return POP_OK;
-    };
-    api->display_set = [](const PopModApi *, const char *key, int64_t value) -> PopModStatus {
-        const int row = display_row(key);
-        if (row < 0)
-            return POP_E_NOTFOUND;
-        if (value < 0 || value > 64)
-            return POP_E_RANGE;
-        return mods_display_set(DisplayRow(row), int(value));
-    };
     api->audio_output = [](const PopModApi *, uint32_t mode, uint32_t flags) -> PopModStatus {
         if (mode > POP_AUDIO_OUTPUT_SURROUND51 ||
             (flags & ~(POP_AUDIO_SWAP_CENTER_LFE | POP_AUDIO_DOLBY_DIGITAL)))

@@ -365,8 +365,6 @@ void build_api(ModContext &c) {
     c.api.screen_size = guarded<&PopModApi::screen_size>;
     c.api.rumble_pulse = guarded<&PopModApi::rumble_pulse>;
     c.api.audio_output = guarded<&PopModApi::audio_output>;
-    c.api.display_get = guarded<&PopModApi::display_get>;
-    c.api.display_set = guarded<&PopModApi::display_set>;
     c.api.hook_install_ex = guarded<&PopModApi::hook_install_ex>;
 }
 
