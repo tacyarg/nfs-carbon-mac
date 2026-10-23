@@ -335,10 +335,16 @@ Explain findings plainly and keep commands copy-pasteable.
   (redirects to c2b430/c2b434, 0071a9f7 MOV EDX,0xf0, NOP 0071a9fc), rain 00722cb0 (slots c2b428 =
   0.5/aspect, c2b42c = 0.5, filled in apply_hud; rain CONFIRMED by the user). Arrest blur 0x9d0584 written
   in apply_hud. Autosculpt = the cursor redirect at 00731665 (already there).
-- MoviePlaybackFix (Misc.ixx) was ported, added a few seconds' pause after the intro, and was
-  REMOVED at the user's request: the start-up black screen was the focus-order bug (kit change 19).
-  If a movie ever fails to start again: a lighter version (wait <= ~0.5 s, callsite hook on
-  008d3ca0 returning to 00888917, SleepEx via IAT 0x9c1140) - git 3a97c02 has the full version.
+- MoviePlaybackFix (mods/core/nfsc/movie.h) BACK and CONFIRMED by the user 2026-10-23 (issue #1: a
+  player's game on an external drive froze on the EA logo 3x and hung in story movies; their logs show
+  the movie player starting 2 threads but never the 2 video-decoder threads). 00888908 checks the audio
+  reader ([esi+0x180], null = no audio) once via 008d3ca0; callsite hook (slot 20) waits alertably
+  (SleepEx IAT 0x9c1140) up to 5 s for audio, as ThirteenAG's. The 2026-10-10 "pause after the intro"
+  was MEASURED: Attract has an audio reader but no audio chunks (MVhd + MV0F only), so the wait timed
+  out. Now the stream's chunk list ([reader+4]+0x50; node +0 next, +8 size, +0xc chunk bytes, +0x14
+  reader index) decides: SC* chunk = audio, a frame (MV0K/MV0F) with no SC* first = none (SCHl always
+  precedes the first frame). Readers: video [esi+0x15c] (00888831 waits for >= 0x20 bytes, then MVhd),
+  audio [esi+0x180], subtitles [esi+0x19c]. Each movie start is logged ("core.nfsc: movie NAME: ...").
 - Not ported (not widescreen): Camera.ixx free look, PostFX SMAA, MSAA, SimRate/high-FPS.
 
 ## Cheats (mods/core/nfsc/cheats.h, 2026-10-17; user: all work)
