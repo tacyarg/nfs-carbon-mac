@@ -1,4 +1,6 @@
 // net_lan.h - virtual TCP over the net mailbox (net_proto.h), for winsock.cpp.
+// From nfsu2-web runtime/web/net_lan.c. Copyright (c) 2026 th0mk; portions (c)
+// 2026 Talha Müderrisoğlu. MIT License.
 // Addresses are host order (10.77.0.1 = 0x0A4D0001). Errors are negative WSA codes.
 #pragma once
 #include "net_proto.h"
