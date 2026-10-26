@@ -228,7 +228,10 @@ export class CloudSaves {
   takeIfNewer() {
     return this.run(async () => {
       const r = await this.req('GET', this.link ? { 'if-none-match': this.link.rev } : {});
-      if (r.status === 404 || r.status === 503) return this.set({ s: 'off' });
+      // 404: nothing kept under this key (none yet, or gone since the last sync): the next save puts it there with
+      // If-None-Match: *.  A server without a vault answers 404 here too; its PUT then fails, which turns saves off.
+      if (r.status === 404) { this.setLink(null); return this.set({ s: 'idle' }); }
+      if (r.status === 503) return this.set({ s: 'off' });
       if (r.status === 304) { if (this.link) this.set({ s: 'synced', saved: this.link.saved }); return; }
       const remote = remoteOf(r);
       if (!r.ok || !remote) return this.set({ s: 'off' });

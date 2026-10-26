@@ -175,3 +175,32 @@ test('never send an empty folder over a cloud copy with profiles', async () => {
   const r = await srv.fetch('/vault', { headers: { authorization: `Bearer ${Buffer.from(token).toString('base64url')}` } });
   assert.equal(r.status, 200);
 });
+
+test('a key with nothing in the cloud yet (GET 404) is not off: the first save puts it there', async () => {
+  const srv = fakeServer();
+  const a = cloud(srv, { tree: { Documents: { 'NFS Carbon': { RACER: { RACER: new Uint8Array([5]) } } } } });
+  await a.takeIfNewer();
+  assert.notEqual(a.state.s, 'off');
+  await a.sendIfChanged();
+  assert.equal(a.state.s, 'synced');
+});
+
+test('a cloud copy gone since the last sync (GET 404 with a link) is put back by the next save', async () => {
+  const srv = fakeServer();
+  const a = cloud(srv, { tree: { Documents: { 'NFS Carbon': { RACER: { RACER: new Uint8Array([6]) } } } } });
+  await a.sendIfChanged();
+  srv.kept.clear();
+  await a.takeIfNewer();
+  assert.notEqual(a.state.s, 'off');
+  await a.sendIfChanged();
+  assert.equal(a.state.s, 'synced');
+  assert.equal(srv.kept.size, 1);
+});
+
+test('a server without a vault (404 to everything): cloud saves end up off', async () => {
+  const a = cloud(fakeServer(), { tree: { Documents: { 'NFS Carbon': { RACER: { RACER: new Uint8Array([7]) } } } } });
+  a.doFetch = async () => new Response('Not found', { status: 404 });
+  await a.takeIfNewer();
+  await a.sendIfChanged();
+  assert.equal(a.state.s, 'off');
+});
