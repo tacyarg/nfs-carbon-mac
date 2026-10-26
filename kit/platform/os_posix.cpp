@@ -20,10 +20,11 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+
+#include <atomic>
 #ifdef __APPLE__
 #include <AudioToolbox/AudioToolbox.h>
 #include <algorithm>
-#include <atomic>
 #ifdef __APPLE__
 #include <mach/mach.h>
 #include <mach/mach_time.h>
