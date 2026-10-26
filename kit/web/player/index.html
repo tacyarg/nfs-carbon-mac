@@ -322,6 +322,14 @@ async function claimName(name, code) {
   } catch { return null; }
 }
 
+// POST /name {code}: the name this key owns, null for none (or no answer).
+async function ownedName(code) {
+  try {
+    const r = await fetch("/name", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) });
+    return r.ok ? (await r.json()).name : null;
+  } catch { return null; }
+}
+
 function showNameState(is) {
   nameStateEl.textContent = is === "taken" ? "Taken by another key" : is === "refused" ? "Not allowed" : "";
 }
@@ -461,7 +469,7 @@ async function start() {
   localStorage.setItem("nfsc-key", key);
   const derived = await K.derive(key);
   loginCode = derived.code;
-  const name = localStorage.getItem("nfsc-name") || K.randomName();
+  let name = localStorage.getItem("nfsc-name") || K.randomName();
   nameEl.value = name;
   keyEl.value = key;
 
@@ -509,6 +517,10 @@ async function start() {
   netEl.textContent = lan ? "Online" : "Offline";
   console.log(lan ? `lan: on the virtual network as ${vipText(lan.vip)}` : "lan: offline");
   if (lan) {
+    // the server knows which name the key owns: a key brought from another browser keeps it, and a rename made
+    // there shows here; only a key with no name yet claims this browser's (or a new Racer one)
+    name = (await ownedName(loginCode)) || name;
+    nameEl.value = name;
     const is = await claimName(name, loginCode);
     if (is === "yours") { localStorage.setItem("nfsc-name", name); online = { name, code: loginCode }; }
     else showNameState(is);
@@ -525,10 +537,6 @@ async function start() {
     const profileDir = await (await root.getDirectoryHandle(id, { create: true })).getDirectoryHandle("profile", { create: true });
     cloud = new V.CloudSaves({ token: derived.token, saveKey: derived.saveKey, dir: profileDir, onState: renderCloud });
     await cloud.takeIfNewer();
-    const restored = localStorage.getItem("nfsc-name");
-    // the cloud brought a different name than the one just claimed (a fresh key, or another browser's
-    // rename): show it and claim it for real next load, the same way a typed name change does
-    if (restored && restored !== name) { nameEl.value = restored; location.reload(); return; }
   } catch (e) { console.warn("cloud saves:", e); }
 
   const exe = streamed ? `/data/${game.executable}` : `/opfs/${id}/game/${game.executable}`;
@@ -615,7 +623,7 @@ nameEl.addEventListener("change", async () => {
   const value = nameEl.value;
   if (!/^[A-Za-z0-9_-]{1,16}$/.test(value)) { nameStateEl.textContent = "Not allowed"; return; }
   nameStateEl.textContent = "";
-  if (!lanOn) return;
+  if (!lanOn) { nameStateEl.textContent = "Offline: change it once online"; return; }
   const is = await claimName(value, loginCode);
   if (is === "yours") { localStorage.setItem("nfsc-name", value); location.reload(); }
   else showNameState(is);

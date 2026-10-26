@@ -15,9 +15,8 @@ export const MAX_BOX = 256 << 10;
 /** the most a box's zip inflates to */
 const MAX_PLAIN = 256 << 20;
 const AAD = 'nfscarbon.xyz key v1';
-const NAME_FILE = 'nfsc-name.txt';
 export const LINK_KEY = 'nfsc-cloud';
-const enc = new TextEncoder(), dec = new TextDecoder();
+const enc = new TextEncoder();
 
 export class VaultError extends Error {
   constructor(message, code = 'VAULT') { super(message); this.code = code; }
@@ -200,23 +199,18 @@ export class CloudSaves {
     return p;
   }
 
-  /** this browser's save folder, minus screenshots and logs, plus its name as nfsc-name.txt */
+  /** this browser's save folder, minus screenshots and logs (the name lives on the server: POST /name {code}) */
   async files() {
     const paths = await listDir(this.dir);
     const files = [];
     for (const p of paths) if (keeps(p)) files.push({ path: p, data: await readFile(this.dir, p) });
-    const name = this.storage?.getItem('nfsc-name');
-    if (name) files.push({ path: NAME_FILE, data: enc.encode(name) });
     return files;
   }
 
-  /** a cloud version in place of the save folder here; its name (if any) replaces nfsc-name */
+  /** a cloud version in place of the save folder here */
   async restore(files) {
     await clearDir(this.dir);
-    for (const f of files) {
-      if (f.path === NAME_FILE) { if (this.storage) this.storage.setItem('nfsc-name', dec.decode(f.data)); continue; }
-      await writeFile(this.dir, f.path, f.data);
-    }
+    for (const f of files) await writeFile(this.dir, f.path, f.data);
   }
 
   async boxOf(files) {
