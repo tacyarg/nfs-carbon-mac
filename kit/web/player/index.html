@@ -141,6 +141,24 @@
   .problem[hidden] { display: none; }
   .problem p { color: #ffd9d3; font-size: 13px; line-height: 20px; }
 
+  /* name and key rows: label, input, inline state/buttons, Carbon panel colors */
+  .field-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; text-align: left; }
+  .field-row label { flex: none; width: 46px; font: 600 12px/1 var(--font-ui); letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+  .field-row input {
+    flex: 1 1 auto; min-width: 0; height: 32px; padding: 0 10px; border-radius: 4px;
+    border: 1px solid var(--panel-edge); background: rgba(0,0,0,0.35); color: var(--text);
+    font: 400 14px/32px var(--font-ui);
+  }
+  .field-row input:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+  .field-state { flex: none; font-size: 12px; color: var(--bad); }
+  .field-btn {
+    flex: none; height: 32px; padding: 0 10px; border-radius: 4px; cursor: pointer;
+    border: 1px solid var(--olive-edge); background: var(--olive); color: var(--yellow);
+    font: 600 12px/1 var(--font-ui); letter-spacing: 0.5px; text-transform: uppercase;
+  }
+  .field-btn:hover { background: #4a4500; }
+  .key-hint { margin-top: 8px; text-align: left; }
+
   .hints { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
   .hint-pill {
     display: flex; align-items: center; gap: 8px; padding: 8px 14px;
@@ -200,6 +218,20 @@
         <p class="status" id="line">Loading</p>
         <p class="status-sub" id="sub">Loading the game.</p>
         <button type="button" id="play" disabled>Play <kbd>Enter</kbd></button>
+        <div class="field-row">
+          <label for="name">Name</label>
+          <input id="name" maxlength="16" spellcheck="false" autocomplete="off">
+          <span id="name-state" class="field-state" role="status"></span>
+        </div>
+        <div class="field-row">
+          <label for="key">Key</label>
+          <input id="key" type="password" readonly>
+          <button type="button" id="key-show" class="field-btn">Show</button>
+          <button type="button" id="key-copy" class="field-btn">Copy</button>
+          <button type="button" id="key-save" class="field-btn">Save</button>
+          <button type="button" id="key-use" class="field-btn">Use another key</button>
+        </div>
+        <p class="hint key-hint">Save this key. It's the only way back to your name and saves.</p>
         <div class="problem" id="problem" hidden>
           <p id="problem-text"></p>
         </div>
@@ -224,7 +256,39 @@ const barFillEl = document.getElementById("bar-fill");
 const netEl = document.getElementById("net");
 const problemEl = document.getElementById("problem");
 const problemTextEl = document.getElementById("problem-text");
+const nameEl = document.getElementById("name");
+const nameStateEl = document.getElementById("name-state");
+const keyEl = document.getElementById("key");
+const keyShowBtn = document.getElementById("key-show");
+const keyCopyBtn = document.getElementById("key-copy");
+const keySaveBtn = document.getElementById("key-save");
+const keyUseBtn = document.getElementById("key-use");
 const autoplay = new URLSearchParams(location.search).has("play");
+
+// Set once start() has made the key and, if the server is up, claimed a name.
+let K, key, loginCode, lanOn = false, online = null;
+
+// POST /name: "yours" (claimed, keep online), "taken" or "refused" (stay offline), null on a network error.
+async function claimName(name, code) {
+  try {
+    const r = await fetch("/name", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, code }),
+    });
+    return r.ok ? (await r.json()).is : null;
+  } catch { return null; }
+}
+
+function showNameState(is) {
+  nameStateEl.textContent = is === "taken" ? "Taken by another key" : is === "refused" ? "Not allowed" : "";
+}
+
+// GET /players, shown in the tab strip; polled every 30 s while the landing is up.
+function pollPlayers() {
+  fetch("/players").then((r) => r.json()).then((d) => {
+    netEl.textContent = `Online \u00b7 ${d.players} player${d.players === 1 ? "" : "s"}`;
+  }).catch(() => {});
+}
 
 function showLanding() { landing.hidden = false; }
 function hideLanding() { landing.hidden = true; }
@@ -349,6 +413,14 @@ function landingUrl() {
 function vipText(vip) { return `${vip >>> 24}.${(vip >> 16) & 255}.${(vip >> 8) & 255}.${vip & 255}`; }
 
 async function start() {
+  K = await import("./key.js");
+  key = K.readKey(localStorage.getItem("nfsc-key") || "") || K.newKey();
+  localStorage.setItem("nfsc-key", key);
+  ({ code: loginCode } = await K.derive(key));
+  const name = localStorage.getItem("nfsc-name") || K.randomName();
+  nameEl.value = name;
+  keyEl.value = key;
+
   if (!crossOriginIsolated) throw new Error("This page must be served cross-origin isolated (COOP/COEP headers).");
   if (!navigator.gpu) throw new Error("This browser has no WebGPU.");
   let id = await gameId();
@@ -389,8 +461,16 @@ async function start() {
   device.addEventListener("uncapturederror", (e) => console.error("WebGPU:", e.error.message));
 
   const lan = await lanConnect();
+  lanOn = !!lan;
   netEl.textContent = lan ? "Online" : "Offline";
   console.log(lan ? `lan: on the virtual network as ${vipText(lan.vip)}` : "lan: offline");
+  if (lan) {
+    const is = await claimName(name, loginCode);
+    if (is === "yours") { localStorage.setItem("nfsc-name", name); online = { name, code: loginCode }; }
+    else showNameState(is);
+    pollPlayers();
+    setInterval(pollPlayers, 30000);
+  }
   const exe = streamed ? `/data/${game.executable}` : `/opfs/${id}/game/${game.executable}`;
   const Module = {
     canvas,
@@ -436,6 +516,7 @@ async function start() {
         m.ENV.RECOMP_LAN = "1";
         m.ENV.RECOMP_SETTING_hide_online = "0";
         m.ENV.RECOMP_SETTING_fesl_plain = "1";
+        if (online) { m.ENV.RECOMP_ONLINE_NAME = online.name; m.ENV.RECOMP_ONLINE_CODE = online.code; }
       }
     }],
     onRuntimeInitialized() {
@@ -464,6 +545,36 @@ canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("click", () => canvas.focus());
 playBtn.addEventListener("click", play);
 document.addEventListener("keydown", (e) => { if (e.key === "Enter" && !playBtn.disabled && !landing.hidden) play(); });
+
+nameEl.addEventListener("change", async () => {
+  const value = nameEl.value;
+  if (!/^[A-Za-z0-9_-]{1,16}$/.test(value)) { nameStateEl.textContent = "Not allowed"; return; }
+  nameStateEl.textContent = "";
+  if (!lanOn) return;
+  const is = await claimName(value, loginCode);
+  if (is === "yours") { localStorage.setItem("nfsc-name", value); location.reload(); }
+  else showNameState(is);
+});
+
+keyUseBtn.addEventListener("click", () => {
+  const text = prompt("Enter your key:");
+  if (text === null) return;
+  const k = K.readKey(text);
+  if (!k) { nameStateEl.textContent = "That is not a key"; return; }
+  localStorage.setItem("nfsc-key", k);
+  localStorage.removeItem("nfsc-name");
+  location.reload();
+});
+keyShowBtn.addEventListener("click", () => { keyEl.type = keyEl.type === "password" ? "text" : "password"; });
+keyCopyBtn.addEventListener("click", () => { navigator.clipboard.writeText(key); });
+keySaveBtn.addEventListener("click", () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([key], { type: "text/plain" }));
+  a.download = "nfscarbon-key.txt";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
 start().catch((e) => status(e.message, true));
 </script>
 </body>
