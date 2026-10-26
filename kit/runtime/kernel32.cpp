@@ -956,7 +956,7 @@ static void profile_file_written(const std::string &path) {
     g_profile_saves++;
 #ifdef __EMSCRIPTEN__
     const std::string rel = path.substr(dir.size() + 1);
-    MAIN_THREAD_ASYNC_EM_ASM({ if (Module.onSaved) Module.onSaved(UTF8ToString($0)); }, strdup(rel.c_str()));
+    MAIN_THREAD_ASYNC_EM_ASM({ const p = UTF8ToString($0); _free($0); if (Module.onSaved) Module.onSaved(p); }, strdup(rel.c_str()));
 #endif
 }
 
