@@ -291,7 +291,7 @@ if(TARGET recomp_gen)
       -sINITIAL_MEMORY=1073741824 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4294967296
       -sSTACK_SIZE=8388608 -sDEFAULT_PTHREAD_STACK_SIZE=16777216
       -sENVIRONMENT=web,worker -sEXIT_RUNTIME=0 -sINVOKE_RUN=0
-      -sEXPORTED_RUNTIME_METHODS=ENV,callMain,FS
+      -sEXPORTED_RUNTIME_METHODS=ENV,callMain,FS,HEAPU8
       --js-library ${POP_ROOT}/web/wasmfs_fetch.js
       --preload-file ${web_resources}@/app/resources)
   elseif(APPLE)

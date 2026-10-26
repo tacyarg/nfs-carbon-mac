@@ -43,6 +43,93 @@ async function gameId() {
   return decodeURIComponent(parts[parts.length - 1] || "");
 }
 
+// The virtual network: one WebSocket to the server's /lan switch, the LAN part of
+// nfsu2-web web/src/net/index.ts (MIT; Copyright (c) 2026 th0mk; portions (c) 2026
+// Talha Müderrisoğlu). Resolves to { ws, vip } once welcomed, or null in 3 s.
+function lanConnect() {
+  const url = new URLSearchParams(location.search).get("lan") ||
+    `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/lan`;
+  return new Promise((resolve) => {
+    let ws;
+    try { ws = new WebSocket(url); } catch { return resolve(null); }
+    ws.binaryType = "arraybuffer";
+    const timer = setTimeout(() => { ws.close(); resolve(null); }, 3000);
+    ws.onopen = () => ws.send(JSON.stringify({ t: "hello", name: "player", deltas: 1, lan: 0 }));
+    ws.onerror = () => { clearTimeout(timer); resolve(null); };
+    ws.onmessage = (e) => {
+      if (typeof e.data !== "string") return;
+      let m;
+      try { m = JSON.parse(e.data); } catch { return; }
+      if (m.t === "welcome" && typeof m.vip === "number") { clearTimeout(timer); resolve({ ws, vip: m.vip >>> 0 }); }
+    };
+  });
+}
+
+// C calls Module.lanAttach(mailbox) once (net_lan.cpp lan_mailbox). From then on
+// frames go TX ring -> socket and socket -> RX ring. Words and slots: net_proto.h.
+function lanBridge(Module, { ws, vip }) {
+  const W = { TX_OFF: 6, RX_OFF: 7, TX_HEAD: 10, TX_BELL: 11, RX_TAIL: 12, PAGE_STATE: 16, VIP: 17,
+              NETMASK: 18, GENERATION: 19, TX_TAIL: 20, RX_HEAD: 21, RX_BELL: 22 };
+  const SLOT = 1536, TX_SLOTS = 128, RX_SLOTS = 256, S_DATA = 32, F_DATA = 16, MAX = 1472, ONLINE = 2, OFFLINE = 3;
+  let base = 0;
+  const i32 = () => new Int32Array(Module.HEAPU8.buffer); // fresh: memory growth replaces the buffer
+  const word = (w) => (base >> 2) + w;
+  const rx = (b) => {
+    const len = b.byteLength - F_DATA;
+    if (!base || len < 0 || len > MAX) return;
+    const I = i32(), head = Atomics.load(I, word(W.RX_HEAD));
+    if (head - Atomics.load(I, word(W.RX_TAIL)) >= RX_SLOTS) return; // C is behind: dropped, as nfsu2-web does
+    const f = new DataView(b), v = new DataView(Module.HEAPU8.buffer);
+    const s = base + I[word(W.RX_OFF)] + ((head >>> 0) % RX_SLOTS) * SLOT;
+    v.setUint32(s, len, true);
+    v.setUint32(s + 4, f.getUint8(0), true);
+    v.setUint32(s + 8, f.getUint32(4), true);
+    v.setUint32(s + 12, f.getUint32(8), true);
+    v.setUint16(s + 16, f.getUint16(12), true);
+    v.setUint16(s + 18, f.getUint16(14), true);
+    Module.HEAPU8.set(new Uint8Array(b, F_DATA), s + S_DATA);
+    Atomics.store(I, word(W.RX_HEAD), (head + 1) | 0);
+    Atomics.add(I, word(W.RX_BELL), 1);
+    Atomics.notify(I, word(W.RX_BELL));
+  };
+  const tx = async () => {
+    for (;;) {
+      const I = i32(), bell = Atomics.load(I, word(W.TX_BELL));
+      let tail = Atomics.load(I, word(W.TX_TAIL));
+      while (tail !== Atomics.load(I, word(W.TX_HEAD))) {
+        const v = new DataView(Module.HEAPU8.buffer);
+        const s = base + I[word(W.TX_OFF)] + ((tail >>> 0) % TX_SLOTS) * SLOT, len = v.getUint32(s, true);
+        if (len <= MAX && ws.readyState === WebSocket.OPEN) {
+          const f = new Uint8Array(F_DATA + len), fv = new DataView(f.buffer);
+          f[0] = v.getUint32(s + 4, true);
+          fv.setUint32(4, vip); // the switch writes the real one
+          fv.setUint32(8, v.getUint32(s + 12, true));
+          fv.setUint16(12, v.getUint16(s + 16, true));
+          fv.setUint16(14, v.getUint16(s + 18, true));
+          f.set(Module.HEAPU8.subarray(s + S_DATA, s + S_DATA + len), F_DATA); // a copy: a socket cannot send shared memory
+          ws.send(f);
+        }
+        tail = (tail + 1) | 0;
+        Atomics.store(I, word(W.TX_TAIL), tail);
+      }
+      if (ws.readyState > WebSocket.OPEN) return;
+      const w = Atomics.waitAsync(I, word(W.TX_BELL), bell, 1000);
+      if (w.async) await w.value;
+    }
+  };
+  ws.onmessage = (e) => { if (typeof e.data !== "string") rx(e.data); };
+  ws.onclose = () => { if (base) Atomics.store(i32(), word(W.PAGE_STATE), OFFLINE); console.warn("lan: the switch went away"); };
+  Module.lanAttach = (ptr) => {
+    base = ptr;
+    const I = i32();
+    Atomics.store(I, word(W.VIP), vip | 0);
+    Atomics.store(I, word(W.NETMASK), 0xffff0000 | 0);
+    Atomics.add(I, word(W.GENERATION), 1);
+    Atomics.store(I, word(W.PAGE_STATE), ws.readyState === WebSocket.OPEN ? ONLINE : OFFLINE);
+    tx();
+  };
+}
+
 async function start() {
   if (!crossOriginIsolated) throw new Error("This page must be served cross-origin isolated (COOP/COEP headers).");
   if (!navigator.gpu) throw new Error("This browser has no WebGPU.");
@@ -80,6 +167,8 @@ async function start() {
   device.lost.then((info) => status(`The graphics device was lost: ${info.message}`, true));
   device.addEventListener("uncapturederror", (e) => console.error("WebGPU:", e.error.message));
 
+  const lan = await lanConnect();
+  console.log(lan ? `lan: on the virtual network as ${lan.vip >>> 24}.${(lan.vip >> 16) & 255}.${(lan.vip >> 8) & 255}.${lan.vip & 255}` : "lan: offline");
   const exe = streamed ? `/data/${game.executable}` : `/opfs/${id}/game/${game.executable}`;
   const Module = {
     canvas,
@@ -95,6 +184,11 @@ async function start() {
       if (streamed) m.ENV.RECOMP_STREAM = new URL("data", location.href).pathname;
       const extra = new URLSearchParams(location.search);
       for (const [k, v] of extra) if (k.startsWith("RECOMP_")) m.ENV[k] = v;
+      if (lan) {
+        m.ENV.RECOMP_LAN = "1";
+        m.ENV.RECOMP_SETTING_hide_online = "0";
+        m.ENV.RECOMP_SETTING_fesl_plain = "1";
+      }
     }],
     onRuntimeInitialized() {
       status("");
@@ -103,6 +197,7 @@ async function start() {
     },
   };
   window.Module = Module;
+  if (lan) lanBridge(Module, lan);
   const script = document.createElement("script");
   script.src = "@APP@.js";
   script.onerror = () => status("The game's web build is missing.", true);
