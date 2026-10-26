@@ -358,7 +358,7 @@ static void fe_pad_install(const PopModApi *api) {
     if (!ok)
         log_line("core.nfsc: controller prompts unavailable");
     if (ok && (api->hook_install(api, WORLDMAP_QUICKLIST_FOCUS, fe_quicklist_focus, POP_HOOK_BEFORE, (void *)1,
-                                 &g_hooks[13]) != POP_OK ||
+                                 &g_hooks[26]) != POP_OK ||
                api->hook_install(api, WORLDMAP_QUICKLIST_UNFOCUS, fe_quicklist_focus, POP_HOOK_BEFORE, NULL,
                                  &g_hooks[14]) != POP_OK))
         log_line("core.nfsc: career map quick list focus unavailable");

@@ -80,7 +80,7 @@ static void online_login_flow(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvo
 static void online_install(void) {
     if (setting("fesl_plain", 0) && install(FESL_SET_SECURE, online_fesl_set_secure, POP_HOOK_REPLACE, 24) == POP_OK)
         log_line("core.nfsc: FESL set to plain TCP (DirtySock secure flag kept off)");
-    if (getenv("RECOMP_ONLINE_NAME") && install(LOGIN_FLOW_CREATE, online_login_flow, POP_HOOK_REPLACE, 14) == POP_OK)
+    if (getenv("RECOMP_ONLINE_NAME") && install(LOGIN_FLOW_CREATE, online_login_flow, POP_HOOK_REPLACE, 25) == POP_OK)
         log_line("core.nfsc: quick online: signing in under the page's name");
     if (!setting("hide_online", 1))
         return;
