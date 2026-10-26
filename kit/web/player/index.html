@@ -5,47 +5,51 @@
      <game id>/game, and the profile lives at <game id>/profile. The page must
      be served cross-origin isolated (COOP same-origin, COEP require-corp).
 
-     The landing phase (#landing) below is styled after nfsu2.xyz's card
-     design (nfsu2-web web/index.html + web/src/app/style.css; MIT, Copyright
-     (c) 2026 th0mk; portions (c) 2026 Talha Müderrisoğlu). A handful of CSS
-     rules are copied near verbatim (colours, the panel/card look, the status
-     word, the Play pill, the key-row layout); marked below. Everything else
-     (markup, the rest of the rules, the whole script) is this project's own,
-     and only shows what this page actually has: no saves, no Discord, no
-     language picker, no screenshots. -->
+     The landing phase (#landing) is styled after NFS Carbon's own main menu
+     (dark garage-at-night backdrop, the teal double-chevron/tab-bar header,
+     the teal dialog band, the dark-olive Accept pill, the slate key-row
+     chips), sampled from the game's menu screenshots. The flow (status,
+     Play/Enter, ?play=1 autostart, quit-to-landing, the /lan bridge, the
+     Online card, Controls) still follows nfsu2.xyz's player page, credited
+     at the net code below; no nfsu2 CSS remains. Fonts fall back to the
+     platform's own stencil/condensed faces (see .top h1 / --font-ui) rather
+     than bundling webfonts, since the build only copies index.html plus the
+     app's .js/.wasm/.data to the launcher output -- bundling fonts would
+     need CMake and web_launcher.py changes for a purely cosmetic face. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>@TITLE@</title>
 <style>
-  /* The MIT-licensed block below is copied, with light edits, from
-     nfsu2-web web/src/app/style.css (MIT, Copyright (c) 2026 th0mk;
-     portions (c) 2026 Talha Müderrisoğlu): the colour variables, the
-     card/panel look, heading sizes, the progress bar, the status word's
-     per-state colour, the Play pill and its Enter chip, and the key-row
-     layout used by the Controls card. */
   :root {
-    --bg: #0d0d0d;
-    --frame: #171717;
-    --panel: #262626;
-    --field: #121212;
-    --line: #3a3a3a;
-    --edge: #8a8a8a;
-    --text: #ffffff;
-    --muted: #c4c4c4;
-    --lime: #c8f088;
-    --lime-fill: #404038;
-    --lime-glow: rgba(200, 240, 136, 0.45);
-    --bad: #ff8a80;
+    --font-stencil: "Stencil Std", Stencil, "Arial Black", sans-serif;
+    --font-ui: "Helvetica Neue", Arial, sans-serif;
+    --night: #0b0d14;
+    --night-glow: #2a3242;
+    --panel: rgba(8, 16, 18, 0.72);
+    --panel-edge: rgba(70, 150, 140, 0.55);
+    --field: #0c1414;
+    --teal: #1c5248;
+    --teal-dark: #0a211c;
+    --teal-bright: #d8ece8;
+    --yellow: #f0c800;
+    --olive: #3c3800;
+    --olive-edge: #6b6400;
+    --text: #e9ecec;
+    --muted: #a9b4b3;
+    --bad: #ff8f80;
+    --bad-edge: #a23b30;
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
   body {
-    background: radial-gradient(1200px 480px at 50% -160px, #2a2a2a, transparent 70%) no-repeat, var(--bg);
+    background:
+      radial-gradient(900px 360px at 20% -80px, rgba(140, 150, 170, 0.18), transparent 70%),
+      linear-gradient(180deg, #1b1f2c 0%, #12151f 45%, var(--night) 100%);
     color: var(--text);
-    font: 400 14px/20px -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font: 400 14px/20px var(--font-ui);
     -webkit-font-smoothing: antialiased;
   }
   h1, h2, p, dl, dd { margin: 0; }
@@ -60,54 +64,93 @@
     .side { grid-column: auto; }
     .main { display: grid; gap: 16px; }
   }
-  .top { background: var(--frame); border-radius: 12px; padding: 20px 24px; }
-  .top h1 { font-size: 26px; line-height: 32px; font-style: italic; font-weight: 700; }
-  .fan { margin: 6px 0 16px; font-size: 13px; color: var(--muted); }
-  .bar { height: 6px; border-radius: 3px; background: #434343; overflow: hidden; }
+
+  /* header: teal chevron emblem + stencil title + a tab-bar strip doubling as the load bar */
+  .top { padding: 4px 0 0; }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .chevron { flex: none; width: 46px; height: 46px; filter: drop-shadow(0 0 6px rgba(80, 200, 185, 0.5)); }
+  .top h1 {
+    font: 700 26px/1.1 var(--font-stencil); letter-spacing: 1px; text-transform: uppercase;
+    font-stretch: condensed; color: #d7dadb; text-shadow: 0 0 1px #000, 0 1px 0 #000, 0 2px 3px rgba(0,0,0,0.8);
+  }
+  .top h1::before, .top h1::after { content: "\2605"; color: var(--yellow); font-size: 0.6em; vertical-align: middle; margin: 0 6px; }
+  .fan { margin: 6px 0 12px; font-size: 12px; color: var(--muted); }
+
+  .bar {
+    position: relative; height: 22px; border-radius: 3px; overflow: hidden;
+    background: rgba(4, 10, 10, 0.8);
+    border-top: 2px dashed #2f6b5f; border-bottom: 2px dashed #2f6b5f;
+    background-image: repeating-linear-gradient(90deg, var(--yellow) 0 2px, transparent 2px 10px);
+    background-position: 0 1px, 0 bottom;
+    background-size: 100% 2px;
+    background-repeat: repeat-x;
+  }
   .bar[hidden] { display: none; }
-  .bar-fill { height: 100%; width: 0%; border-radius: 3px; background: var(--lime); box-shadow: 0 0 8px var(--lime-glow); transition: width 0.2s linear; }
+  .bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--teal-dark), var(--teal) 60%, #2e8a79); transition: width 0.2s linear; }
 
-  .panel { background: var(--panel); border-radius: 12px; padding: 20px 24px; }
-  .panel h2 { font-size: 17px; line-height: 24px; font-style: italic; font-weight: 700; color: var(--lime); margin-bottom: 12px; }
+  /* panels: dark translucent, thin teal edge, condensed caps headings */
+  .panel { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 6px; padding: 18px 22px; backdrop-filter: blur(2px); }
+  .panel h2 {
+    font: 700 14px/20px var(--font-ui); font-stretch: condensed; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px dashed var(--panel-edge);
+  }
+  .panel.side h2 { color: var(--yellow); }
 
-  .hero { text-align: center; }
-  .status { font-size: 26px; line-height: 32px; font-style: italic; font-weight: 700; color: var(--text); }
-  .status.is-ready { color: var(--lime); }
+  /* hero: the dialog band, full width, holding status + Play */
+  .hero {
+    text-align: center; border: none; padding: 26px 22px;
+    background:
+      repeating-linear-gradient(45deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 14px),
+      repeating-linear-gradient(-45deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 14px),
+      linear-gradient(180deg, var(--teal-dark), var(--teal) 45%, var(--teal-dark));
+    border-top: 2px solid var(--teal-bright);
+    border-bottom: 2px solid var(--teal-bright);
+    box-shadow: 0 0 18px rgba(30, 110, 95, 0.35);
+  }
+  .status {
+    font: 700 22px/28px var(--font-ui); font-stretch: condensed; letter-spacing: 0.5px;
+    text-transform: uppercase; color: var(--text);
+  }
+  .status.is-ready { color: #eaffb0; }
   .status.is-error { color: var(--bad); }
-  .status-sub { margin: 4px 0 20px; font-size: 13px; color: var(--muted); white-space: pre-line; }
+  .status-sub { margin: 4px 0 20px; font-size: 13px; color: #d4e4e1; white-space: pre-line; }
 
   #play {
-    display: inline-flex; align-items: center; gap: 14px;
-    height: 44px; padding: 0 16px 0 22px; border-radius: 22px;
-    border: 2px solid var(--lime); background: var(--lime-fill); color: var(--lime);
-    font: italic 700 16px/24px inherit; cursor: pointer; box-shadow: 0 0 12px var(--lime-glow);
+    display: inline-flex; align-items: center; gap: 12px;
+    height: 44px; padding: 0 18px 0 24px; border-radius: 22px;
+    border: 2px solid var(--olive-edge); background: var(--olive); color: var(--yellow);
+    font: 700 16px/24px var(--font-ui); font-stretch: condensed; letter-spacing: 1px; text-transform: uppercase;
+    cursor: pointer; box-shadow: 0 2px 0 rgba(0,0,0,0.4);
   }
-  #play:hover:not(:disabled) { background: #4c5440; }
-  #play:disabled { border-color: #4a4a4a; background: var(--field); color: var(--edge); box-shadow: none; cursor: not-allowed; }
-  #play kbd { border-color: currentColor; background: none; color: inherit; }
-  #play:focus-visible { outline: 2px solid var(--lime); outline-offset: 3px; }
+  #play:hover:not(:disabled) { background: #4a4500; }
+  #play:disabled { border-color: #444; background: #1a1a1a; color: #777; box-shadow: none; cursor: not-allowed; }
+  #play:focus-visible { outline: 2px solid var(--yellow); outline-offset: 3px; }
 
+  /* key hints: slate/teal rounded tabs with a grey key box, used by #play's kbd and the Controls rows */
   kbd {
-    display: inline-block; min-width: 22px; padding: 1px 7px; border: 1px solid var(--edge); border-radius: 4px;
-    background: var(--field); color: var(--text); font: 12px/18px -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align: center;
+    display: inline-flex; align-items: center; justify-content: center; min-width: 22px; padding: 2px 7px;
+    border: 1px solid #5a6664; border-radius: 4px; background: #44504e; color: #f2f4f4;
+    font: 700 12px/18px var(--font-ui); text-align: center;
   }
+  #play kbd { background: rgba(0,0,0,0.35); border-color: var(--yellow); color: var(--yellow); }
 
-  .problem { margin-top: 16px; text-align: left; background: var(--field); border: 2px solid var(--bad); border-radius: 8px; padding: 12px 16px; }
+  .problem { margin-top: 16px; text-align: left; background: rgba(0,0,0,0.4); border: 2px solid var(--bad-edge); border-radius: 6px; padding: 12px 16px; }
   .problem[hidden] { display: none; }
-  .problem p { color: var(--muted); font-size: 13px; line-height: 20px; }
+  .problem p { color: #ffd9d3; font-size: 13px; line-height: 20px; }
 
   .net { margin: 0; font-size: 13px; color: var(--muted); }
 
-  .keys { display: grid; gap: 0; margin: 0; }
-  .keys > div { display: flex; align-items: center; gap: 16px; padding: 8px 0; }
-  .keys + .keys, .keys > div + div { box-shadow: inset 0 1px var(--line); }
+  .keys { display: grid; gap: 6px; margin: 0; }
+  .keys > div {
+    display: flex; align-items: center; gap: 16px; padding: 8px 12px;
+    background: rgba(20, 45, 42, 0.5); border-radius: 14px;
+  }
   .keys dt { order: 1; flex: none; margin-left: auto; display: flex; align-items: center; gap: 4px; }
-  .keys dd { color: var(--muted); font-size: 14px; }
+  .keys dd { color: var(--text); font-size: 13px; font-stretch: condensed; }
   .hint { font-size: 12px; color: var(--muted); margin: 14px 0 0; }
 
-  :focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; box-shadow: 0 0 12px var(--lime-glow); }
+  :focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
   :focus:not(:focus-visible) { outline: none; }
-  /* end of the copied block */
 </style>
 </head>
 <body>
@@ -115,7 +158,13 @@
 <div id="landing">
   <div class="app">
     <header class="top">
-      <h1 id="title">@TITLE@</h1>
+      <div class="brand">
+        <svg class="chevron" viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M4 10 L24 24 L4 38" fill="none" stroke="#3fa895" stroke-width="9" stroke-linecap="square"/>
+          <path d="M20 10 L40 24 L20 38" fill="none" stroke="#9fd6cb" stroke-width="9" stroke-linecap="square"/>
+        </svg>
+        <h1 id="title">@TITLE@</h1>
+      </div>
       <p class="fan">Fan project. Not affiliated with or endorsed by Electronic Arts.</p>
       <div class="bar" id="bar" hidden><div class="bar-fill" id="bar-fill"></div></div>
     </header>
