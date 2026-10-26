@@ -69,6 +69,8 @@ def copy_web_build(game_id, build, out):
     for f in build.iterdir():
         if f.is_file() and (f.name == "index.html" or f.suffix in WEB_BUILD_SUFFIXES):
             shutil.copy2(f, dest / f.name)
+    if (build / "fonts").is_dir():
+        shutil.copytree(build / "fonts", dest / "fonts", dirs_exist_ok=True)
 
 
 def excluded(relative, patterns):

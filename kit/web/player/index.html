@@ -5,31 +5,37 @@
      <game id>/game, and the profile lives at <game id>/profile. The page must
      be served cross-origin isolated (COOP same-origin, COEP require-corp).
 
-     The landing phase (#landing) is styled after NFS Carbon's own main menu
-     (dark garage-at-night backdrop, the teal double-chevron/tab-bar header,
-     the teal dialog band, the dark-olive Accept pill, the slate key-row
-     chips), sampled from the game's menu screenshots. The flow (status,
-     Play/Enter, ?play=1 autostart, quit-to-landing, the /lan bridge, the
-     Online card, Controls) still follows nfsu2.xyz's player page, credited
-     at the net code below; no nfsu2 CSS remains. Fonts fall back to the
-     platform's own stencil/condensed faces (see .top h1 / --font-ui) rather
-     than bundling webfonts, since the build only copies index.html plus the
-     app's .js/.wasm/.data to the launcher output -- bundling fonts would
-     need CMake and web_launcher.py changes for a purely cosmetic face. -->
+     The landing phase (#landing) is a full-screen scene styled after NFS
+     Carbon's own main menu: a teal shield emblem with a downward double
+     chevron, a stencil title with a stars motif, an always-visible tab strip
+     (teal-dashed edges, yellow end chevrons, PLAY/network tabs) that doubles
+     as the load progress bar, the teal dialog band carrying the status line
+     and Play pill, and a bottom row of key-hint pills instead of a Controls
+     card. Two OFL webfonts (fonts/, CMakeLists.txt and web_launcher.py carry
+     them next to index.html) replace the platform fallback stencil face.
+     The flow (status, Play/Enter, ?play=1 autostart, quit-to-landing, the
+     /lan bridge, the network line, the key hints) still follows nfsu2.xyz's
+     player page, credited at the net code below; no nfsu2 CSS remains. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>@TITLE@</title>
 <style>
+  @font-face {
+    font-family: "NFSStencil"; font-weight: 400; font-display: swap;
+    src: url("fonts/SairaStencilOne-Regular.ttf") format("truetype");
+  }
+  @font-face {
+    font-family: "NFSCondensed"; font-weight: 600; font-display: swap;
+    src: url("fonts/BarlowCondensed-SemiBold.ttf") format("truetype");
+  }
   :root {
-    --font-stencil: "Stencil Std", Stencil, "Arial Black", sans-serif;
-    --font-ui: "Helvetica Neue", Arial, sans-serif;
+    --font-stencil: "NFSStencil", "Arial Black", sans-serif;
+    --font-ui: "NFSCondensed", "Helvetica Neue", Arial, sans-serif;
     --night: #0b0d14;
-    --night-glow: #2a3242;
     --panel: rgba(8, 16, 18, 0.72);
     --panel-edge: rgba(70, 150, 140, 0.55);
-    --field: #0c1414;
     --teal: #1c5248;
     --teal-dark: #0a211c;
     --teal-bright: #d8ece8;
@@ -38,6 +44,7 @@
     --olive-edge: #6b6400;
     --text: #e9ecec;
     --muted: #a9b4b3;
+    --dim: #7c8887;
     --bad: #ff8f80;
     --bad-edge: #a23b30;
     color-scheme: dark;
@@ -46,59 +53,55 @@
   html, body { margin: 0; height: 100%; }
   body {
     background:
+      linear-gradient(115deg, transparent 42%, rgba(255,255,255,0.05) 49%, transparent 58%),
+      radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.6) 100%),
       radial-gradient(900px 360px at 20% -80px, rgba(140, 150, 170, 0.18), transparent 70%),
       linear-gradient(180deg, #1b1f2c 0%, #12151f 45%, var(--night) 100%);
     color: var(--text);
     font: 400 14px/20px var(--font-ui);
     -webkit-font-smoothing: antialiased;
   }
-  h1, h2, p, dl, dd { margin: 0; }
+  h1, p, dl, dd { margin: 0; }
   #canvas { display: block; width: 100vw; height: 100vh; outline: none; }
   #landing { position: fixed; inset: 0; overflow-y: auto; background: inherit; }
   #landing[hidden] { display: none; }
 
-  .app { max-width: 960px; margin: 0 auto; padding: 24px 20px 48px; display: grid; gap: 16px; }
-  @media (min-width: 720px) {
-    .app { grid-template-columns: minmax(0, 1fr) 320px; align-items: start; }
-    .top, .side { grid-column: 1 / -1; }
-    .side { grid-column: auto; }
-    .main { display: grid; gap: 16px; }
-  }
+  .scene { min-height: 100%; display: flex; flex-direction: column; gap: 16px; padding: 24px clamp(16px, 4vw, 48px) 28px; }
 
-  /* header: teal chevron emblem + stencil title + a tab-bar strip doubling as the load bar */
-  .top { padding: 4px 0 0; }
-  .brand { display: flex; align-items: center; gap: 14px; }
-  .chevron { flex: none; width: 46px; height: 46px; filter: drop-shadow(0 0 6px rgba(80, 200, 185, 0.5)); }
+  /* header: teal shield emblem (downward double chevron) + stencil title */
+  .top { display: flex; align-items: flex-start; gap: 14px; }
+  .emblem { flex: none; width: 58px; height: 58px; filter: drop-shadow(0 0 6px rgba(80, 200, 185, 0.5)); }
   .top h1 {
-    font: 700 26px/1.1 var(--font-stencil); letter-spacing: 1px; text-transform: uppercase;
-    font-stretch: condensed; color: #d7dadb; text-shadow: 0 0 1px #000, 0 1px 0 #000, 0 2px 3px rgba(0,0,0,0.8);
+    font: 400 28px/1.15 var(--font-stencil); letter-spacing: 1px; text-transform: uppercase;
+    color: #d7dadb; text-shadow: 0 0 1px #000, 0 1px 0 #000, 0 2px 3px rgba(0,0,0,0.8);
   }
-  .top h1::before, .top h1::after { content: "\2605"; color: var(--yellow); font-size: 0.6em; vertical-align: middle; margin: 0 6px; }
-  .fan { margin: 6px 0 12px; font-size: 12px; color: var(--muted); }
+  .top h1::before, .top h1::after { content: "\2605"; color: var(--yellow); font-size: 0.55em; vertical-align: middle; margin: 0 6px; }
+  .fan { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
 
+  /* tab strip: always visible, teal-dashed edges, yellow end chevrons; the
+     fill is the load progress while loading, and underlies the PLAY/network
+     tabs once ready. Non-interactive: no destinations exist to navigate to. */
+  .tabs { display: flex; align-items: center; gap: 8px; }
+  .tabs-arrow { flex: none; color: var(--yellow); font-size: 16px; line-height: 1; }
   .bar {
-    position: relative; height: 22px; border-radius: 3px; overflow: hidden;
+    position: relative; flex: 1 1 auto; height: 30px; border-radius: 3px; overflow: hidden;
     background: rgba(4, 10, 10, 0.8);
     border-top: 2px dashed #2f6b5f; border-bottom: 2px dashed #2f6b5f;
-    background-image: repeating-linear-gradient(90deg, var(--yellow) 0 2px, transparent 2px 10px);
-    background-position: 0 1px, 0 bottom;
-    background-size: 100% 2px;
-    background-repeat: repeat-x;
   }
-  .bar[hidden] { display: none; }
-  .bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--teal-dark), var(--teal) 60%, #2e8a79); transition: width 0.2s linear; }
-
-  /* panels: dark translucent, thin teal edge, condensed caps headings */
-  .panel { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 6px; padding: 18px 22px; backdrop-filter: blur(2px); }
-  .panel h2 {
-    font: 700 14px/20px var(--font-ui); font-stretch: condensed; letter-spacing: 1.5px; text-transform: uppercase;
-    color: var(--muted); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px dashed var(--panel-edge);
+  .bar-fill { position: absolute; inset: 0; width: 0%; background: linear-gradient(90deg, var(--teal-dark), var(--teal) 60%, #2e8a79); transition: width 0.2s linear; }
+  .tabs-labels { position: absolute; inset: 0; display: flex; align-items: center; gap: 20px; padding: 0 14px; pointer-events: none; }
+  .tab {
+    font: 600 13px/1 var(--font-ui); letter-spacing: 1px; text-transform: uppercase; color: var(--dim);
   }
-  .panel.side h2 { color: var(--yellow); }
+  .tab.is-selected { color: var(--yellow); }
 
-  /* hero: the dialog band, full width, holding status + Play */
+  /* panels: dark translucent, thin teal edge */
+  .panel { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 6px; backdrop-filter: blur(2px); }
+
+  /* hero: the dialog band, holding status + Play, centered like Carbon's own dialogs */
+  .hero-wrap { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-height: 0; padding: 8px 0; }
   .hero {
-    text-align: center; border: none; padding: 26px 22px;
+    width: 100%; max-width: 760px; text-align: center; border: none; padding: 26px 22px;
     background:
       repeating-linear-gradient(45deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 14px),
       repeating-linear-gradient(-45deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 14px),
@@ -108,7 +111,7 @@
     box-shadow: 0 0 18px rgba(30, 110, 95, 0.35);
   }
   .status {
-    font: 700 22px/28px var(--font-ui); font-stretch: condensed; letter-spacing: 0.5px;
+    font: 600 22px/28px var(--font-ui); letter-spacing: 0.5px;
     text-transform: uppercase; color: var(--text);
   }
   .status.is-ready { color: #eaffb0; }
@@ -119,18 +122,18 @@
     display: inline-flex; align-items: center; gap: 12px;
     height: 44px; padding: 0 18px 0 24px; border-radius: 22px;
     border: 2px solid var(--olive-edge); background: var(--olive); color: var(--yellow);
-    font: 700 16px/24px var(--font-ui); font-stretch: condensed; letter-spacing: 1px; text-transform: uppercase;
+    font: 600 16px/24px var(--font-ui); letter-spacing: 1px; text-transform: uppercase;
     cursor: pointer; box-shadow: 0 2px 0 rgba(0,0,0,0.4);
   }
   #play:hover:not(:disabled) { background: #4a4500; }
   #play:disabled { border-color: #444; background: #1a1a1a; color: #777; box-shadow: none; cursor: not-allowed; }
   #play:focus-visible { outline: 2px solid var(--yellow); outline-offset: 3px; }
 
-  /* key hints: slate/teal rounded tabs with a grey key box, used by #play's kbd and the Controls rows */
+  /* key hints: slate rounded pills with a grey key box, bottom row */
   kbd {
     display: inline-flex; align-items: center; justify-content: center; min-width: 22px; padding: 2px 7px;
     border: 1px solid #5a6664; border-radius: 4px; background: #44504e; color: #f2f4f4;
-    font: 700 12px/18px var(--font-ui); text-align: center;
+    font: 600 12px/18px var(--font-ui); text-align: center;
   }
   #play kbd { background: rgba(0,0,0,0.35); border-color: var(--yellow); color: var(--yellow); }
 
@@ -138,37 +141,61 @@
   .problem[hidden] { display: none; }
   .problem p { color: #ffd9d3; font-size: 13px; line-height: 20px; }
 
-  .net { margin: 0; font-size: 13px; color: var(--muted); }
-
-  .keys { display: grid; gap: 6px; margin: 0; }
-  .keys > div {
-    display: flex; align-items: center; gap: 16px; padding: 8px 12px;
+  .hints { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+  .hint-pill {
+    display: flex; align-items: center; gap: 8px; padding: 8px 14px;
     background: rgba(20, 45, 42, 0.5); border-radius: 14px;
   }
-  .keys dt { order: 1; flex: none; margin-left: auto; display: flex; align-items: center; gap: 4px; }
-  .keys dd { color: var(--text); font-size: 13px; font-stretch: condensed; }
-  .hint { font-size: 12px; color: var(--muted); margin: 14px 0 0; }
+  .hint-pill span { font-size: 13px; color: var(--text); }
+  .hint { font-size: 12px; color: var(--muted); flex-basis: 100%; margin: 0; }
 
   :focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
   :focus:not(:focus-visible) { outline: none; }
+
+  @media (max-width: 900px) {
+    .top h1 { font-size: 22px; }
+    .tabs-labels { gap: 10px; padding: 0 10px; }
+    .hero { padding: 20px 14px; }
+  }
 </style>
 </head>
 <body>
 <canvas id="canvas" tabindex="-1"></canvas>
 <div id="landing">
-  <div class="app">
+  <div class="scene">
     <header class="top">
-      <div class="brand">
-        <svg class="chevron" viewBox="0 0 48 48" aria-hidden="true">
-          <path d="M4 10 L24 24 L4 38" fill="none" stroke="#3fa895" stroke-width="9" stroke-linecap="square"/>
-          <path d="M20 10 L40 24 L20 38" fill="none" stroke="#9fd6cb" stroke-width="9" stroke-linecap="square"/>
-        </svg>
+      <!-- Teal shield badge with a downward double chevron, bevelled; the
+           generic shape Carbon's menus use, drawn fresh here (no EA art). -->
+      <svg class="emblem" viewBox="0 0 100 100" aria-hidden="true">
+        <defs>
+          <linearGradient id="shieldFill" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#2f7268"/>
+            <stop offset="1" stop-color="#0d2c26"/>
+          </linearGradient>
+        </defs>
+        <path d="M50 3 L93 22 L93 63 Q93 78 80 87 L50 99 L20 87 Q7 78 7 63 L7 22 Z"
+              fill="url(#shieldFill)" stroke="#6fd0bf" stroke-width="2"/>
+        <path d="M18 26 L50 50 L82 26" fill="none" stroke="#bfe9e0" stroke-width="11" stroke-linecap="square" stroke-linejoin="miter"/>
+        <path d="M18 50 L50 74 L82 50" fill="none" stroke="#0e3a33" stroke-width="11" stroke-linecap="square" stroke-linejoin="miter"/>
+        <path d="M22 27 L50 49" fill="none" stroke="#f3fffb" stroke-width="2" stroke-linecap="round" opacity="0.65"/>
+      </svg>
+      <div>
         <h1 id="title">@TITLE@</h1>
+        <p class="fan">Fan project. Not affiliated with or endorsed by Electronic Arts.</p>
       </div>
-      <p class="fan">Fan project. Not affiliated with or endorsed by Electronic Arts.</p>
-      <div class="bar" id="bar" hidden><div class="bar-fill" id="bar-fill"></div></div>
     </header>
-    <div class="main">
+    <nav class="tabs" aria-hidden="true">
+      <span class="tabs-arrow">&#8249;</span>
+      <div class="bar" id="bar">
+        <div class="bar-fill" id="bar-fill"></div>
+        <div class="tabs-labels">
+          <span class="tab is-selected">Play</span>
+          <span class="tab" id="net"></span>
+        </div>
+      </div>
+      <span class="tabs-arrow">&#8250;</span>
+    </nav>
+    <div class="hero-wrap">
       <section class="panel hero">
         <p class="status" id="line">Loading</p>
         <p class="status-sub" id="sub">Loading the game.</p>
@@ -177,20 +204,13 @@
           <p id="problem-text"></p>
         </div>
       </section>
-      <section class="panel">
-        <h2>Controls</h2>
-        <dl class="keys">
-          <div><dt><kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&larr;</kbd> <kbd>&rarr;</kbd></dt><dd>Menus</dd></div>
-          <div><dt><kbd>Enter</kbd></dt><dd>Select</dd></div>
-          <div><dt><kbd>Esc</kbd></dt><dd>Back, pause</dd></div>
-        </dl>
-        <p class="hint">Change keys in the game's Options, Controls.</p>
-      </section>
     </div>
-    <section class="panel side">
-      <h2>Online</h2>
-      <p class="net" id="net"></p>
-    </section>
+    <footer class="hints">
+      <div class="hint-pill"><kbd>&uarr;</kbd><kbd>&darr;</kbd><kbd>&larr;</kbd><kbd>&rarr;</kbd><span>Menus</span></div>
+      <div class="hint-pill"><kbd>Enter</kbd><span>Select</span></div>
+      <div class="hint-pill"><kbd>Esc</kbd><span>Back, pause</span></div>
+      <p class="hint">Change keys in the game's Options, Controls.</p>
+    </footer>
   </div>
 </div>
 <script>
@@ -200,7 +220,6 @@ const landing = document.getElementById("landing");
 const lineEl = document.getElementById("line");
 const subEl = document.getElementById("sub");
 const playBtn = document.getElementById("play");
-const barEl = document.getElementById("bar");
 const barFillEl = document.getElementById("bar-fill");
 const netEl = document.getElementById("net");
 const problemEl = document.getElementById("problem");
@@ -368,9 +387,7 @@ async function start() {
   device.addEventListener("uncapturederror", (e) => console.error("WebGPU:", e.error.message));
 
   const lan = await lanConnect();
-  netEl.textContent = lan
-    ? `Online, on this server's network as ${vipText(lan.vip)}.`
-    : "Offline: single player, not joined to any server.";
+  netEl.textContent = lan ? `Online ${vipText(lan.vip)}` : "Offline";
   console.log(lan ? `lan: on the virtual network as ${vipText(lan.vip)}` : "lan: offline");
   const exe = streamed ? `/data/${game.executable}` : `/opfs/${id}/game/${game.executable}`;
   const Module = {
@@ -403,7 +420,6 @@ async function start() {
     },
     setStatus: (t) => {
       const m = /\((\d+)\/(\d+)\)/.exec(t || "");
-      barEl.hidden = !m;
       if (m) barFillEl.style.width = `${(100 * m[1]) / m[2]}%`;
       status(t || "");
     },
@@ -422,6 +438,7 @@ async function start() {
     }],
     onRuntimeInitialized() {
       status("");
+      barFillEl.style.width = "100%";
       playBtn.disabled = false;
       if (autoplay) play();
     },

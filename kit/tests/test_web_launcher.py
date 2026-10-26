@@ -46,9 +46,12 @@ class WebLauncherTests(unittest.TestCase):
                 web_launcher.copy_web_build("stub", build, tmp / "site")
             for name in ("index.html", "App.js", "App.wasm", "App.data", "libgen.a"):
                 (build / name).write_text(name)
+            (build / "fonts").mkdir()
+            (build / "fonts" / "Stencil.ttf").write_text("font")
             web_launcher.copy_web_build("stub", build, tmp / "site")
             copied = sorted(f.name for f in (tmp / "site/stub").iterdir())
-            self.assertEqual(copied, ["App.data", "App.js", "App.wasm", "index.html"])
+            self.assertEqual(copied, ["App.data", "App.js", "App.wasm", "fonts", "index.html"])
+            self.assertEqual([f.name for f in (tmp / "site/stub/fonts").iterdir()], ["Stencil.ttf"])
     def test_core_suite(self):
         node = shutil.which("node")
         if not node:
