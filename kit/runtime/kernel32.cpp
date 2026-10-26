@@ -170,6 +170,25 @@ HObj *handle_any(uint32_t h) {
     return it == handles().end() ? nullptr : &it->second;
 }
 
+// A cooperatively scheduled guest thread does not run until some other guest
+// thread yields, which can be long after CreateThread returns - and Windows
+// lets the creator close its handle immediately and forget it (a common
+// fire-and-forget pattern: CreateThread(...); CloseHandle(h);), because the
+// thread's own kernel object outlives any handle to it. k_CreateThread marks
+// that by giving a scheduled thread's HObj a second reference up front; this
+// drops it once the thread has actually run (or will never get to, because
+// the process exited first) and the scheduler has no further use for
+// thread_start/thread_param. Without it, CloseHandle's ordinary decrement-to-
+// zero erased the HObj before thread_host_main read thread_start, and the
+// thread executed at eip=0 (NFS Carbon's EA Nation hostname lookup does
+// exactly this and crashed on it).
+void thread_object_release(uint32_t h) {
+    HObj *o = handle_any(h);
+    if (!o || --o->references)
+        return;
+    handles().erase(h);
+}
+
 // A/W names share one object namespace. Repeated opens retain the object until
 // every returned handle is closed; initial state only applies on first creation.
 bool reuse_named_object(X86 *c, const std::string &name, HKind kind) {
@@ -3313,6 +3332,7 @@ void *thread_host_main(void *arg) {
             o->exit_code = 0;
             o->thread_ran = false;
         }
+        thread_object_release(t->handle);
         if (g_baton == t->index)
             sched_handoff_on_exit_locked(t->index, "process exit before start");
         g_sched_m.unlock();
@@ -3340,6 +3360,7 @@ void *thread_host_main(void *arg) {
         o->exit_code = result;
         o->thread_ran = true;
     }
+    thread_object_release(t->handle);
     sched_handoff_on_exit_locked(t->index, "thread ended");
     g_sched_m.unlock();
     return nullptr;
@@ -3568,6 +3589,11 @@ void k_CreateThread(X86 *c) {
         handles()[h].thread_suspended = true;
     }
     handles()[h].thread_ran = true; // it exists; it is not a stub
+    // A second reference for the thread's own kernel object (see
+    // thread_object_release): the scheduler still has to read thread_start
+    // from this HObj whenever it finally runs this thread, even if the
+    // creator closes its handle the moment CreateThread returns.
+    handles()[h].references = 2;
     if (ptid)
         wr32(ptid, t->id);
     LOGV("CreateThread(%08x, param=%08x, flags=%08x) -> handle %08x id %u", start, param, flags, h,

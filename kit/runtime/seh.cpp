@@ -455,8 +455,15 @@ int recomp_seh_raise(X86 *c, uint32_t code, uint32_t flags, uint32_t nargs, uint
     }
 #endif
     if (!intercepted)
-        LOGW("SEH: unhandled exception record=%08x context=%08x code=%08x flags=%08x", d->record,
-             d->context, code, flags);
+        // EIP (and the return address under ESP) name the faulting call site,
+        // which a second occurrence of the same code/flags otherwise hides:
+        // every "null-call" and "null read/write" raise is logged once per
+        // call site (see cpu.cpp), but a raise reaching here any other way
+        // (RaiseException, a future raiser) had no such key before this.
+        LOGW("SEH: unhandled exception record=%08x context=%08x code=%08x flags=%08x eip=%08x "
+             "esp=%08x nargs=%u arg0=%08x arg1=%08x",
+             d->record, d->context, code, flags, saved.eip, saved.r[R_ESP], nargs,
+             nargs > 0 ? rd32(d->record + 20) : 0, nargs > 1 ? rd32(d->record + 24) : 0);
     finish_dispatch(d);
     return intercepted;
 }

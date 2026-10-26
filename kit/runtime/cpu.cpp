@@ -235,7 +235,13 @@ void recomp_unknown_call(X86 *c, uint32_t target) {
         if (exception_info_block(c, &info)) {
             wr32(info, 8);
             wr32(info + 4, target);
-            log_once("null-call",
+            // Keyed by the return address, not a single shared key: every call
+            // site that calls through a null pointer is its own bug, and a
+            // global key let the second site's fault go unlogged because the
+            // first one already used it up.
+            char null_call_key[32];
+            snprintf(null_call_key, sizeof null_call_key, "null-call:%08x", ret);
+            log_once(null_call_key,
                      "call to %08x (return=%08x): raising an access violation, as Windows "
                      "would, for the guest's handlers",
                      target, ret);

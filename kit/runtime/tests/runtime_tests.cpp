@@ -3496,6 +3496,23 @@ static void test_callbacks(X86 *c) {
     check(call_import(c, "KERNEL32.dll", "ResumeThread", {th2}) == 0,
           "a second ResumeThread reports no suspend count");
 
+    // A fire-and-forget thread: CreateThread(...); CloseHandle(h); and never
+    // touch the handle again, trusting the thread's own kernel object to
+    // outlive it, exactly as Windows guarantees and as NFS Carbon's EA Nation
+    // hostname lookup (00977300) does. Closing the handle before anything
+    // yields the baton must not erase the thread_start/thread_param the
+    // scheduler still needs when it eventually runs this thread.
+    g_callback_hits = 0;
+    uint32_t fire_forget_th = call_import(c, "KERNEL32.dll", "CreateThread", {0, 0, fn, 0x2d, 0, 0});
+    check(fire_forget_th != 0, "the fire-and-forget CreateThread returned a handle");
+    check(call_import(c, "KERNEL32.dll", "CloseHandle", {fire_forget_th}) == 1,
+          "closing the handle immediately succeeds");
+    for (int i = 0; i < 40 && g_callback_hits == 0; ++i)
+        call_import(c, "KERNEL32.dll", "Sleep", {5});
+    check(g_callback_hits == 1 && g_callback_args[0] == 0x2d,
+          "the thread still ran with its real start address and parameter "
+          "after its only handle was closed before it was scheduled");
+
     // Multimedia timer callbacks fire through the same path. A fake clock keeps
     // the test independent of how long the host takes to get here.
     g_callback_hits = 0;
