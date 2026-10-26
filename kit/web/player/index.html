@@ -52,9 +52,11 @@ async function start() {
   if (!game) throw new Error(`No game "${id}" in the launcher's games.json.`);
   document.title = game.title;
 
-  // The game must have been imported by the launcher first.
+  // A streamed game (web_launcher.py --stream) is served beside this page in
+  // data/; otherwise the launcher must have imported it first.
+  const streamed = await fetch("data/manifest.txt", { method: "HEAD" }).then((r) => r.ok).catch(() => false);
   let dir = await navigator.storage.getDirectory();
-  try {
+  if (!streamed) try {
     for (const p of [id, "game"]) dir = await dir.getDirectoryHandle(p);
     await dir.getFileHandle(game.executable);
   } catch {
@@ -78,7 +80,7 @@ async function start() {
   device.lost.then((info) => status(`The graphics device was lost: ${info.message}`, true));
   device.addEventListener("uncapturederror", (e) => console.error("WebGPU:", e.error.message));
 
-  const exe = `/opfs/${id}/game/${game.executable}`;
+  const exe = streamed ? `/data/${game.executable}` : `/opfs/${id}/game/${game.executable}`;
   const Module = {
     canvas,
     preinitializedWebGPUDevice: device,
@@ -90,6 +92,7 @@ async function start() {
     preRun: [() => {
       const m = Module;
       m.ENV.RECOMP_PROFILE_DIR = `/opfs/${id}/profile`;
+      if (streamed) m.ENV.RECOMP_STREAM = new URL("data", location.href).pathname;
       const extra = new URLSearchParams(location.search);
       for (const [k, v] of extra) if (k.startsWith("RECOMP_")) m.ENV[k] = v;
     }],

@@ -57,7 +57,10 @@
 #include "../gpu/d3d9_backend.h"
 #include <emscripten/emscripten.h>
 #include <emscripten/wasmfs.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <thread>
+#include <unistd.h>
 #endif
 #include <SDL3/SDL_vulkan.h>
 
@@ -1863,12 +1866,52 @@ void web_frame() {
         emscripten_cancel_main_loop();
 }
 
+// A streamed game (tools/web_launcher.py --stream): the page sets RECOMP_STREAM
+// to the URL path of the folder served beside it, mounted here as /data and
+// fetched in ranges as the game reads it; its manifest.txt lists the files.
+// Fetched chunks stay in memory only, so each launch fetches them again; a
+// persistent block cache in OPFS would keep them between launches.
+static void web_mount_stream(const char *url) {
+    const char *mb = getenv("RECOMP_STREAM_CHUNK_MB");
+    backend_t fetch = wasmfs_create_fetch_backend(url, uint32_t(mb ? atoi(mb) : 4) << 20);
+    if (!fetch || wasmfs_create_directory("/data", 0777, fetch) != 0) {
+        fprintf(stderr, RECOMP_APP_NAME ": could not mount the streamed game at %s\n", url);
+        return;
+    }
+    auto add = [](const std::string &path) {
+        for (size_t i = path.find('/', 1); i != std::string::npos; i = path.find('/', i + 1))
+            mkdir(path.substr(0, i).c_str(), 0777);
+        int fd = open(path.c_str(), O_CREAT | O_RDONLY, 0444);
+        if (fd >= 0)
+            close(fd);
+    };
+    add("/data/manifest.txt");
+    FILE *m = fopen("/data/manifest.txt", "r");
+    if (!m) {
+        fprintf(stderr, RECOMP_APP_NAME ": no manifest.txt in the streamed game at %s\n", url);
+        return;
+    }
+    char line[1024];
+    int n = 0;
+    while (fgets(line, sizeof line, m)) {
+        line[strcspn(line, "\r\n")] = 0;
+        if (*line) {
+            add(std::string("/data/") + line);
+            n++;
+        }
+    }
+    fclose(m);
+    printf(RECOMP_APP_NAME ": streaming %d files from %s\n", n, url);
+}
+
 // The game's thread: the game's files are read from here, never from the
 // main thread, which may not wait for the file system.
 void web_guest() {
     backend_t opfs = wasmfs_create_opfs_backend();
     if (!opfs || wasmfs_create_directory("/opfs", 0777, opfs) != 0)
         fprintf(stderr, RECOMP_APP_NAME ": the browser's private file system is unavailable\n");
+    if (const char *stream = getenv("RECOMP_STREAM"))
+        web_mount_stream(stream);
     std::string dir = g_web_exe.substr(0, g_web_exe.find_last_of('/'));
     if (!dir.empty() && os_chdir(dir.c_str()) != 0)
         fprintf(stderr, "[host] could not enter %s\n", dir.c_str());
