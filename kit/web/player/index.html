@@ -232,6 +232,7 @@
           <button type="button" id="key-use" class="field-btn">Use another key</button>
         </div>
         <p class="hint key-hint">Save this key. It's the only way back to your name and saves.</p>
+        <div class="hint" id="cloud" hidden></div>
         <div class="problem" id="problem" hidden>
           <p id="problem-text"></p>
         </div>
@@ -263,10 +264,52 @@ const keyShowBtn = document.getElementById("key-show");
 const keyCopyBtn = document.getElementById("key-copy");
 const keySaveBtn = document.getElementById("key-save");
 const keyUseBtn = document.getElementById("key-use");
+const cloudEl = document.getElementById("cloud");
 const autoplay = new URLSearchParams(location.search).has("play");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Set once start() has made the key and, if the server is up, claimed a name.
 let K, key, loginCode, lanOn = false, online = null;
+// The cloud save link for this key (vault.js). Off when the saveKey/token could not be made, or the
+// save folder could not be reached; the game still plays from local saves either way.
+let cloud = null, saveTimer = null;
+
+function relTime(ms) {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return "just now";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  const d = Math.round(h / 24);
+  return `${d} day${d === 1 ? "" : "s"} ago`;
+}
+
+// #cloud under the key box: a status line, or the two buttons a conflict needs the player to pick between.
+function renderCloud(state) {
+  cloudEl.textContent = "";
+  cloudEl.hidden = true;
+  if (state.s === "synced") { cloudEl.hidden = false; cloudEl.textContent = `Saved to the cloud ${relTime(state.saved)}`; }
+  else if (state.s === "full") { cloudEl.hidden = false; cloudEl.textContent = "Cloud saves are full"; }
+  else if (state.s === "off") { cloudEl.hidden = false; cloudEl.textContent = "Cloud saves are off"; }
+  else if (state.s === "conflict") {
+    cloudEl.hidden = false;
+    const keepBtn = document.createElement("button");
+    keepBtn.type = "button"; keepBtn.className = "field-btn"; keepBtn.textContent = "Keep this browser's";
+    keepBtn.addEventListener("click", () => cloud.keepMine());
+    const useBtn = document.createElement("button");
+    useBtn.type = "button"; useBtn.className = "field-btn"; useBtn.textContent = "Use the cloud's";
+    useBtn.addEventListener("click", () => cloud.useTheirs());
+    cloudEl.append("A save conflict. ", keepBtn, " ", useBtn);
+  }
+}
+
+// Sends the pending save (if any), at most 3 s, then returns to the landing.
+async function quit() {
+  clearTimeout(saveTimer);
+  if (cloud) await Promise.race([cloud.sendIfChanged(), sleep(3000)]);
+  location.replace(landingUrl());
+}
 
 // POST /name: "yours" (claimed, keep online), "taken" or "refused" (stay offline), null on a network error.
 async function claimName(name, code) {
@@ -416,7 +459,8 @@ async function start() {
   K = await import("./key.js");
   key = K.readKey(localStorage.getItem("nfsc-key") || "") || K.newKey();
   localStorage.setItem("nfsc-key", key);
-  ({ code: loginCode } = await K.derive(key));
+  const derived = await K.derive(key);
+  loginCode = derived.code;
   const name = localStorage.getItem("nfsc-name") || K.randomName();
   nameEl.value = name;
   keyEl.value = key;
@@ -471,6 +515,22 @@ async function start() {
     pollPlayers();
     setInterval(pollPlayers, 30000);
   }
+
+  // Cloud saves: this browser's profile dir kept on the server too, sealed under the key (vault.js). A
+  // server without a vault, or no answer at all, leaves cloud saves quietly off; the game still plays
+  // from local saves.
+  try {
+    const V = await import("./vault.js");
+    const root = await navigator.storage.getDirectory();
+    const profileDir = await (await root.getDirectoryHandle(id, { create: true })).getDirectoryHandle("profile", { create: true });
+    cloud = new V.CloudSaves({ token: derived.token, saveKey: derived.saveKey, dir: profileDir, onState: renderCloud });
+    await cloud.takeIfNewer();
+    const restored = localStorage.getItem("nfsc-name");
+    // the cloud brought a different name than the one just claimed (a fresh key, or another browser's
+    // rename): show it and claim it for real next load, the same way a typed name change does
+    if (restored && restored !== name) { nameEl.value = restored; location.reload(); return; }
+  } catch (e) { console.warn("cloud saves:", e); }
+
   const exe = streamed ? `/data/${game.executable}` : `/opfs/${id}/game/${game.executable}`;
   const Module = {
     canvas,
@@ -483,7 +543,7 @@ async function start() {
     // reports the exit, so the page would be stuck on a dead canvas instead
     // of returning to the landing.
     noExitRuntime: false,
-    onExit: () => location.replace(landingUrl()),
+    onExit: () => quit(),
     print: (t) => { log.push(t); console.log(t); },
     printErr: (t) => {
       log.push(t); console.warn(t);
@@ -498,7 +558,7 @@ async function start() {
       // log-text match is a soft signal: if this message ever changes or is
       // filtered out, this stops firing and the page needs a real export
       // instead (an EM_JS call at the same spot in loader.cpp).
-      if (/guest process exited with code/.test(t)) location.replace(landingUrl());
+      if (/guest process exited with code/.test(t)) quit();
     },
     setStatus: (t) => {
       const m = /\((\d+)\/(\d+)\)/.exec(t || "");
@@ -506,6 +566,11 @@ async function start() {
       status(t || "");
     },
     onAbort: (what) => status(`The game stopped: ${what}`, true),
+    onSaved: () => {
+      if (!cloud) return;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => cloud.sendIfChanged(), 3000);
+    },
     preRun: [() => {
       const m = Module;
       m.ENV.RECOMP_PROFILE_DIR = `/opfs/${id}/profile`;
@@ -563,6 +628,7 @@ keyUseBtn.addEventListener("click", () => {
   if (!k) { nameStateEl.textContent = "That is not a key"; return; }
   localStorage.setItem("nfsc-key", k);
   localStorage.removeItem("nfsc-name");
+  localStorage.removeItem("nfsc-cloud");
   location.reload();
 });
 keyShowBtn.addEventListener("click", () => { keyEl.type = keyEl.type === "password" ? "text" : "password"; });

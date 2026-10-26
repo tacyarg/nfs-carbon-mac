@@ -287,7 +287,8 @@ if(TARGET recomp_gen)
     set(TITLE ${RECOMP_GAME_NAME})
     configure_file(${POP_ROOT}/web/player/index.html ${POP_OUT}/index.html @ONLY)
     file(COPY ${POP_ROOT}/web/player/fonts DESTINATION ${POP_OUT})
-    file(COPY ${POP_ROOT}/web/player/key.js ${POP_ROOT}/web/player/words.js DESTINATION ${POP_OUT})
+    file(COPY ${POP_ROOT}/web/player/key.js ${POP_ROOT}/web/player/words.js
+         ${POP_ROOT}/web/player/zip.js ${POP_ROOT}/web/player/vault.js DESTINATION ${POP_OUT})
     target_link_options(recomp_app PRIVATE
       -pthread -sPTHREAD_POOL_SIZE=24 -sWASMFS
       -sINITIAL_MEMORY=1073741824 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4294967296
