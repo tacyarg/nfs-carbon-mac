@@ -5,73 +5,144 @@
      <game id>/game, and the profile lives at <game id>/profile. The page must
      be served cross-origin isolated (COOP same-origin, COEP require-corp).
 
-     The landing phase (#landing) below is laid out after nfsu2.xyz's
-     (nfsu2-web web/index.html + web/src/static/main.css; MIT, Copyright (c)
-     2026 th0mk; portions (c) 2026 Talha Müderrisoğlu): a header with the
-     title and the EA disclaimer, a thin load progress bar, a hero panel with
-     a status line and a Play button, and a Controls panel. No code or CSS
-     rules were copied from it; this is an independent implementation of the
-     same layout. -->
+     The landing phase (#landing) below is styled after nfsu2.xyz's card
+     design (nfsu2-web web/index.html + web/src/app/style.css; MIT, Copyright
+     (c) 2026 th0mk; portions (c) 2026 Talha Müderrisoğlu). A handful of CSS
+     rules are copied near verbatim (colours, the panel/card look, the status
+     word, the Play pill, the key-row layout); marked below. Everything else
+     (markup, the rest of the rules, the whole script) is this project's own,
+     and only shows what this page actually has: no saves, no Discord, no
+     language picker, no screenshots. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>@TITLE@</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #0b0b0c; color: #ddd; font: 14px/1.5 system-ui, sans-serif; overflow: hidden; }
+  /* The MIT-licensed block below is copied, with light edits, from
+     nfsu2-web web/src/app/style.css (MIT, Copyright (c) 2026 th0mk;
+     portions (c) 2026 Talha Müderrisoğlu): the colour variables, the
+     card/panel look, heading sizes, the progress bar, the status word's
+     per-state colour, the Play pill and its Enter chip, and the key-row
+     layout used by the Controls card. */
+  :root {
+    --bg: #0d0d0d;
+    --frame: #171717;
+    --panel: #262626;
+    --field: #121212;
+    --line: #3a3a3a;
+    --edge: #8a8a8a;
+    --text: #ffffff;
+    --muted: #c4c4c4;
+    --lime: #c8f088;
+    --lime-fill: #404038;
+    --lime-glow: rgba(200, 240, 136, 0.45);
+    --bad: #ff8a80;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: radial-gradient(1200px 480px at 50% -160px, #2a2a2a, transparent 70%) no-repeat, var(--bg);
+    color: var(--text);
+    font: 400 14px/20px -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, p, dl, dd { margin: 0; }
   #canvas { display: block; width: 100vw; height: 100vh; outline: none; }
-  #landing { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
-             background: #0b0b0c; overflow-y: auto; }
+  #landing { position: fixed; inset: 0; overflow-y: auto; background: inherit; }
   #landing[hidden] { display: none; }
-  #landing header { width: 100%; max-width: 640px; padding: 24px 20px 0; box-sizing: border-box; }
-  #landing h1 { margin: 0; font-size: 22px; letter-spacing: 0.02em; color: #fff; }
-  #landing .fan { margin: 6px 0 16px; font-size: 12px; color: #888; }
-  .bar { height: 3px; background: #222; border-radius: 2px; overflow: hidden; }
-  .bar-fill { height: 100%; width: 0%; background: #8cf08c; transition: width 0.2s linear; }
-  .hero { width: 100%; max-width: 640px; padding: 28px 20px; box-sizing: border-box; text-align: center; }
-  .hero .line { margin: 0; font-size: 18px; color: #fff; }
-  .hero .sub { margin: 4px 0 20px; font-size: 13px; color: #999; white-space: pre-line; }
-  .hero .sub.err { color: #f08c8c; }
-  #play { font: inherit; font-size: 17px; font-weight: 600; padding: 12px 36px; border-radius: 8px;
-          border: none; background: #8cf08c; color: #0b0b0c; cursor: pointer; }
-  #play:disabled { background: #333; color: #777; cursor: default; }
-  #play:focus-visible { outline: 2px solid #8cf08c; outline-offset: 3px; }
-  #play kbd { font: inherit; opacity: 0.6; margin-left: 6px; }
-  .net { margin: 14px 0 0; font-size: 12px; color: #777; }
-  .back { color: #8cf0e0; }
-  .panel { width: 100%; max-width: 640px; padding: 0 20px 28px; box-sizing: border-box; }
-  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: #999; margin: 0 0 10px; }
-  .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
-  .keys dt { white-space: nowrap; }
-  .keys dd { margin: 0; color: #aaa; }
-  kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px solid #444; border-radius: 4px;
-        background: #1a1a1c; font: 12px/1.6 system-ui, sans-serif; text-align: center; }
-  .hint { font-size: 12px; color: #777; margin: 12px 0 0; }
+
+  .app { max-width: 960px; margin: 0 auto; padding: 24px 20px 48px; display: grid; gap: 16px; }
+  @media (min-width: 720px) {
+    .app { grid-template-columns: minmax(0, 1fr) 320px; align-items: start; }
+    .top, .side { grid-column: 1 / -1; }
+    .side { grid-column: auto; }
+    .main { display: grid; gap: 16px; }
+  }
+  .top { background: var(--frame); border-radius: 12px; padding: 20px 24px; }
+  .top h1 { font-size: 26px; line-height: 32px; font-style: italic; font-weight: 700; }
+  .fan { margin: 6px 0 16px; font-size: 13px; color: var(--muted); }
+  .bar { height: 6px; border-radius: 3px; background: #434343; overflow: hidden; }
+  .bar[hidden] { display: none; }
+  .bar-fill { height: 100%; width: 0%; border-radius: 3px; background: var(--lime); box-shadow: 0 0 8px var(--lime-glow); transition: width 0.2s linear; }
+
+  .panel { background: var(--panel); border-radius: 12px; padding: 20px 24px; }
+  .panel h2 { font-size: 17px; line-height: 24px; font-style: italic; font-weight: 700; color: var(--lime); margin-bottom: 12px; }
+
+  .hero { text-align: center; }
+  .status { font-size: 26px; line-height: 32px; font-style: italic; font-weight: 700; color: var(--text); }
+  .status.is-ready { color: var(--lime); }
+  .status.is-error { color: var(--bad); }
+  .status-sub { margin: 4px 0 20px; font-size: 13px; color: var(--muted); white-space: pre-line; }
+
+  #play {
+    display: inline-flex; align-items: center; gap: 14px;
+    height: 44px; padding: 0 16px 0 22px; border-radius: 22px;
+    border: 2px solid var(--lime); background: var(--lime-fill); color: var(--lime);
+    font: italic 700 16px/24px inherit; cursor: pointer; box-shadow: 0 0 12px var(--lime-glow);
+  }
+  #play:hover:not(:disabled) { background: #4c5440; }
+  #play:disabled { border-color: #4a4a4a; background: var(--field); color: var(--edge); box-shadow: none; cursor: not-allowed; }
+  #play kbd { border-color: currentColor; background: none; color: inherit; }
+  #play:focus-visible { outline: 2px solid var(--lime); outline-offset: 3px; }
+
+  kbd {
+    display: inline-block; min-width: 22px; padding: 1px 7px; border: 1px solid var(--edge); border-radius: 4px;
+    background: var(--field); color: var(--text); font: 12px/18px -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align: center;
+  }
+
+  .problem { margin-top: 16px; text-align: left; background: var(--field); border: 2px solid var(--bad); border-radius: 8px; padding: 12px 16px; }
+  .problem[hidden] { display: none; }
+  .problem p { color: var(--muted); font-size: 13px; line-height: 20px; }
+
+  .net { margin: 0; font-size: 13px; color: var(--muted); }
+
+  .keys { display: grid; gap: 0; margin: 0; }
+  .keys > div { display: flex; align-items: center; gap: 16px; padding: 8px 0; }
+  .keys + .keys, .keys > div + div { box-shadow: inset 0 1px var(--line); }
+  .keys dt { order: 1; flex: none; margin-left: auto; display: flex; align-items: center; gap: 4px; }
+  .keys dd { color: var(--muted); font-size: 14px; }
+  .hint { font-size: 12px; color: var(--muted); margin: 14px 0 0; }
+
+  :focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; box-shadow: 0 0 12px var(--lime-glow); }
+  :focus:not(:focus-visible) { outline: none; }
+  /* end of the copied block */
 </style>
 </head>
 <body>
 <canvas id="canvas" tabindex="-1"></canvas>
 <div id="landing">
-  <header>
-    <h1 id="title">@TITLE@</h1>
-    <p class="fan">Fan project. Not affiliated with or endorsed by Electronic Arts.</p>
-    <div class="bar" id="bar" hidden><div class="bar-fill" id="bar-fill"></div></div>
-  </header>
-  <section class="hero">
-    <p class="line" id="line">Loading</p>
-    <p class="sub" id="sub">Loading the game.</p>
-    <button type="button" id="play" disabled>Play <kbd>Enter</kbd></button>
-    <p class="net" id="net"></p>
-  </section>
-  <section class="panel">
-    <h2>Controls</h2>
-    <dl class="keys">
-      <div><dt><kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&larr;</kbd> <kbd>&rarr;</kbd></dt><dd>Menus</dd></div>
-      <div><dt><kbd>Enter</kbd></dt><dd>Select</dd></div>
-      <div><dt><kbd>Esc</kbd></dt><dd>Back, pause</dd></div>
-    </dl>
-    <p class="hint">Change keys in the game's Options, Controls.</p>
-  </section>
+  <div class="app">
+    <header class="top">
+      <h1 id="title">@TITLE@</h1>
+      <p class="fan">Fan project. Not affiliated with or endorsed by Electronic Arts.</p>
+      <div class="bar" id="bar" hidden><div class="bar-fill" id="bar-fill"></div></div>
+    </header>
+    <div class="main">
+      <section class="panel hero">
+        <p class="status" id="line">Loading</p>
+        <p class="status-sub" id="sub">Loading the game.</p>
+        <button type="button" id="play" disabled>Play <kbd>Enter</kbd></button>
+        <div class="problem" id="problem" hidden>
+          <p id="problem-text"></p>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>Controls</h2>
+        <dl class="keys">
+          <div><dt><kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&larr;</kbd> <kbd>&rarr;</kbd></dt><dd>Menus</dd></div>
+          <div><dt><kbd>Enter</kbd></dt><dd>Select</dd></div>
+          <div><dt><kbd>Esc</kbd></dt><dd>Back, pause</dd></div>
+        </dl>
+        <p class="hint">Change keys in the game's Options, Controls.</p>
+      </section>
+    </div>
+    <section class="panel side">
+      <h2>Online</h2>
+      <p class="net" id="net"></p>
+    </section>
+  </div>
 </div>
 <script>
 "use strict";
@@ -83,6 +154,8 @@ const playBtn = document.getElementById("play");
 const barEl = document.getElementById("bar");
 const barFillEl = document.getElementById("bar-fill");
 const netEl = document.getElementById("net");
+const problemEl = document.getElementById("problem");
+const problemTextEl = document.getElementById("problem-text");
 const autoplay = new URLSearchParams(location.search).has("play");
 
 function showLanding() { landing.hidden = false; }
@@ -92,8 +165,11 @@ function hideLanding() { landing.hidden = true; }
 // the landing instead of leaving a black canvas behind it.
 function status(text, isError) {
   lineEl.textContent = isError ? "Could not start" : (text ? "Loading" : "Ready");
+  lineEl.classList.toggle("is-error", !!isError);
+  lineEl.classList.toggle("is-ready", !isError && !text);
   subEl.textContent = text;
-  subEl.classList.toggle("err", !!isError);
+  problemEl.hidden = !isError;
+  problemTextEl.textContent = text;
   if (isError) { playBtn.disabled = true; showLanding(); }
 }
 
@@ -202,6 +278,8 @@ function landingUrl() {
   return location.pathname + (s ? `?${s}` : "");
 }
 
+function vipText(vip) { return `${vip >>> 24}.${(vip >> 16) & 255}.${(vip >> 8) & 255}.${vip & 255}`; }
+
 async function start() {
   if (!crossOriginIsolated) throw new Error("This page must be served cross-origin isolated (COOP/COEP headers).");
   if (!navigator.gpu) throw new Error("This browser has no WebGPU.");
@@ -241,8 +319,10 @@ async function start() {
   device.addEventListener("uncapturederror", (e) => console.error("WebGPU:", e.error.message));
 
   const lan = await lanConnect();
-  netEl.textContent = lan ? "Online (on this server's network)" : "Offline (single player)";
-  console.log(lan ? `lan: on the virtual network as ${lan.vip >>> 24}.${(lan.vip >> 16) & 255}.${(lan.vip >> 8) & 255}.${lan.vip & 255}` : "lan: offline");
+  netEl.textContent = lan
+    ? `Online, on this server's network as ${vipText(lan.vip)}.`
+    : "Offline: single player, not joined to any server.";
+  console.log(lan ? `lan: on the virtual network as ${vipText(lan.vip)}` : "lan: offline");
   const exe = streamed ? `/data/${game.executable}` : `/opfs/${id}/game/${game.executable}`;
   const Module = {
     canvas,
