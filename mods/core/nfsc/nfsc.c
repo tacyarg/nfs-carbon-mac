@@ -107,9 +107,6 @@ static uint32_t get_u32(uint32_t addr) {
     g_api->guest_read_u32(g_api, addr, &v);
     return v;
 }
-static void put_u32(uint32_t addr, uint32_t v) {
-    g_api->guest_write_u32(g_api, addr, v);
-}
 static int64_t setting(const char *key, int64_t fallback) {
     int64_t v = fallback;
     g_api->settings_get(g_api, key, &v);
