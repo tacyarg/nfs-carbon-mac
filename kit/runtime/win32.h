@@ -132,6 +132,9 @@ std::string win32_guest_path(const std::string &host_path);
 // or closed handles and failed position queries; outputs are then unchanged.
 bool win32_file_handle_position(uint32_t handle, std::string *host_path, int64_t *offset);
 void win32_invalidate_dir_cache();
+// Closed H_FILE handles the game wrote under the profile dir, since boot: one
+// per k_CloseHandle that posts the page's Module.onSaved (the quick-online spec).
+uint32_t runtime_profile_saves(void);
 
 // The lister reports one (name, host_path) pair per file, already merged and
 // de-duplicated across tiers, so FindFirstFileA can fill metadata from the

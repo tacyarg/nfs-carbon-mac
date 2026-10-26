@@ -1,7 +1,11 @@
 #include <atomic>
 #include "seh.h"
 #include "profile.h"
+#include "layout.h"
 #include "game_config.h"
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 // kernel32.cpp - KERNEL32 shims: heap, files, modules, TLS, sync objects,
 // time and the string/locale helpers the CRT startup calls.
 //
@@ -103,6 +107,7 @@ struct HObj {
     uint32_t references = 1;
     int fd = -1;      // H_FILE, H_MAPPING
     std::string path; // H_FILE, H_MAPPING, H_MODULE
+    bool wrote = false; // H_FILE: a WriteFile went through (a save the page may sync: k_CloseHandle)
     // H_FILE opened for writing on an existing file: the open went through
     // the read tier, and the write tier is resolved by the first write. See
     // file_promote_for_write.
@@ -892,6 +897,7 @@ void k_WriteFile(X86 *c) {
         set_eax(c, 0);
         return;
     }
+    o->wrote = true;
     if (pwrote)
         wr32(pwrote, (uint32_t)n);
     set_eax(c, 1);
@@ -939,6 +945,21 @@ void k_GetFileSize(X86 *c) {
     set_eax(c, (uint32_t)st.size);
 }
 
+// A file the game wrote under the profile dir was closed: a save (or the game's settings). The page
+// syncs the save folder after it (player index.html, Module.onSaved; the quick-online spec).
+static uint32_t g_profile_saves;
+static void profile_file_written(const std::string &path) {
+    const std::string &dir = host_layout().profile_dir;
+    if (dir.empty() || path.size() <= dir.size() + 1 || path.compare(0, dir.size(), dir) != 0 ||
+        path[dir.size()] != '/')
+        return;
+    g_profile_saves++;
+#ifdef __EMSCRIPTEN__
+    const std::string rel = path.substr(dir.size() + 1);
+    MAIN_THREAD_ASYNC_EM_ASM({ if (Module.onSaved) Module.onSaved(UTF8ToString($0)); }, strdup(rel.c_str()));
+#endif
+}
+
 void k_CloseHandle(X86 *c) {
     uint32_t h = arg(c, 0);
     HObj *o = handle_any(h);
@@ -951,6 +972,8 @@ void k_CloseHandle(X86 *c) {
         set_eax(c, 1);
         return;
     }
+    if (o->kind == H_FILE && o->wrote)
+        profile_file_written(o->path);
     if ((o->kind == H_FILE || o->kind == H_MAPPING) && o->fd >= 0)
         os_fd_close(o->fd);
     handles().erase(h);
@@ -1324,6 +1347,7 @@ void k_GetCommandLineA(X86 *c) {
     get_command_line(c);
 }
 } // namespace
+uint32_t runtime_profile_saves(void) { return g_profile_saves; }
 void win32_reset_command_line_for_test() {
     kernel32_wide_reset_command_line();
     g_cmdline_addr = 0;

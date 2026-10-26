@@ -13,6 +13,7 @@
 #include "../discovery.h"
 #include "../memory.h"
 #include "../win32.h"
+#include "../layout.h"
 #include "../../platform/os.h"
 #include "game_config.h"
 
@@ -1323,6 +1324,69 @@ static void test_version_resource(X86 *c) {
     uint32_t other = put_str("C:\\somewhere\\else.exe");
     check(call_import(c, "VERSION.dll", "GetFileVersionInfoSizeA", {other, handle}) == 0,
           "another file has no version resource here");
+}
+
+static int profile_saves_test_resolver(const char *relative, int, char *out, size_t out_len) {
+    std::string host = host_layout().profile_dir + "/" + relative;
+    if (host.size() >= out_len)
+        return 0;
+    memcpy(out, host.c_str(), host.size() + 1);
+    return 1;
+}
+// A second resolver, for the "outside the profile dir" half of the test: any
+// other writable directory proves the point, without touching the developer
+// checkout the way falling through to the game directory would.
+static int profile_saves_outside_test_resolver(const char *relative, int, char *out,
+                                               size_t out_len) {
+    std::string host = "build/recomp/profile-saves-outside-test/" + std::string(relative);
+    if (host.size() >= out_len)
+        return 0;
+    memcpy(out, host.c_str(), host.size() + 1);
+    return 1;
+}
+
+// A closed file the game wrote under the profile dir is a save the page may
+// sync; a read-only open, or a write outside the profile dir, is not.
+static void test_profile_saves(X86 *c) {
+    section("profile saves: closing a written file under the profile dir is counted");
+    uint32_t before = runtime_profile_saves();
+
+    win32_set_file_ops(profile_saves_test_resolver, nullptr);
+    mkdir_p(host_layout().profile_dir + "/Documents/NFS Carbon/RACER");
+    uint32_t name = put_str("Documents\\NFS Carbon\\RACER\\RACER");
+    uint32_t h = call_import(c, "KERNEL32.dll", "CreateFileA",
+                              {name, 0x40000000u, 0, 0, 2 /*CREATE_ALWAYS*/, 0x80, 0});
+    check(h != 0xffffffffu, "CreateFileA under the profile dir");
+    uint32_t data = put_str("save");
+    uint32_t written = scratch_block(4);
+    check(call_import(c, "KERNEL32.dll", "WriteFile", {h, data, 4, written, 0}) == 1,
+          "WriteFile of 4 bytes");
+    check(call_import(c, "KERNEL32.dll", "CloseHandle", {h}) == 1, "CloseHandle");
+    check(runtime_profile_saves() == before + 1,
+          "closing the written file posted one save (now %u)", runtime_profile_saves());
+
+    uint32_t rh = call_import(c, "KERNEL32.dll", "CreateFileA",
+                              {name, 0x80000000u, 0, 0, 3 /*OPEN_EXISTING*/, 0x80, 0});
+    check(rh != 0xffffffffu, "reopen the same file read-only");
+    call_import(c, "KERNEL32.dll", "CloseHandle", {rh});
+    check(runtime_profile_saves() == before + 1, "closing a read-only handle does not count");
+
+    win32_set_file_ops(nullptr, nullptr);
+    uint32_t outside_name = put_str("profile_saves_test_outside.dat");
+    mkdir_p("build/recomp/profile-saves-outside-test");
+    win32_set_file_ops(profile_saves_outside_test_resolver, nullptr);
+    uint32_t oh = call_import(c, "KERNEL32.dll", "CreateFileA",
+                              {outside_name, 0x40000000u, 0, 0, 2, 0x80, 0});
+    check(oh != 0xffffffffu, "CreateFileA outside the profile dir");
+    call_import(c, "KERNEL32.dll", "WriteFile", {oh, data, 4, written, 0});
+    call_import(c, "KERNEL32.dll", "CloseHandle", {oh});
+    check(runtime_profile_saves() == before + 1,
+          "closing a written file outside the profile dir does not count");
+    call_import(c, "KERNEL32.dll", "DeleteFileA", {outside_name});
+    win32_set_file_ops(nullptr, nullptr);
+
+    remove_tree(host_layout().profile_dir + "/Documents");
+    remove_tree("build/recomp/profile-saves-outside-test");
 }
 
 static void test_files(X86 *c) {
@@ -6914,6 +6978,7 @@ int main(int argc, char **argv) {
     test_heap_shims(c);
     test_memory_shims_2(c);
     test_files(c);
+    test_profile_saves(c);
     test_version_resource(c);
     test_pinned_clock(c);
     test_cadence_trace(c);
