@@ -286,6 +286,41 @@ static void test_raw_socket_refused() {
           "a raw socket is WSAEACCES, as for a Windows user without admin rights");
 }
 
+static void test_events_and_pending_overlapped() {
+    X86 c;
+    loader_init_context(&c);
+    page_online(ME);
+    uint32_t ev = ws(&c, "WSACreateEvent", {});
+    check(ev != 0, "WSACreateEvent gives a handle");
+    wr32(SCRATCH + 0x20, ev);
+    check(ws(&c, "WSAWaitForMultipleEvents", {1, SCRATCH + 0x20, 0, 0, 0}) == 0x102,
+          "a new event is not signalled (WSA_WAIT_TIMEOUT)");
+    check(ws(&c, "WSASetEvent", {ev}) == 1, "WSASetEvent");
+    check(ws(&c, "WSAWaitForMultipleEvents", {1, SCRATCH + 0x20, 0, 0, 0}) == 0, "now it fires (index 0)");
+    check(ws(&c, "WSAWaitForMultipleEvents", {1, SCRATCH + 0x20, 0, 0, 0}) == 0, "and stays set: manual reset");
+    check(ws(&c, "WSAResetEvent", {ev}) == 1, "WSAResetEvent");
+    check(ws(&c, "WSAWaitForMultipleEvents", {1, SCRATCH + 0x20, 0, 0, 0}) == 0x102, "reset again");
+
+    uint32_t s = ws(&c, "socket", {2, 2, 17});
+    uint32_t wsabuf = SCRATCH + 0x400, ov = SCRATCH + 0x420;
+    wr32(wsabuf, 1000);
+    wr32(wsabuf + 4, SCRATCH + 0x800);
+    memset(g_mem + ov, 0, 20);
+    wr32(ov + 16, ev); // OVERLAPPED.hEvent
+    wr32(SCRATCH + 0x440, 16);
+    check(ws(&c, "WSARecvFrom", {s, wsabuf, 1, SCRATCH + 0x444, SCRATCH + 0x448, SCRATCH + 0x450, SCRATCH + 0x440, ov, 0}) ==
+                  0xffffffffu &&
+              ws(&c, "WSAGetLastError", {}) == 997,
+          "an overlapped UDP receive is posted (WSA_IO_PENDING)");
+    check(ws(&c, "WSAGetOverlappedResult", {s, ov, SCRATCH + 0x444, 0, SCRATCH + 0x448}) == 0 &&
+              ws(&c, "WSAGetLastError", {}) == 996,
+          "and stays incomplete (WSA_IO_INCOMPLETE)");
+    check(ws(&c, "WSAWaitForMultipleEvents", {1, SCRATCH + 0x20, 0, 0, 0}) == 0x102,
+          "its event is not signalled by a receive that never completed");
+    ws(&c, "closesocket", {s});
+    check(ws(&c, "WSACloseEvent", {ev}) == 1, "WSACloseEvent");
+}
+
 int main() {
     mem_init();
     imports_init();
@@ -299,6 +334,7 @@ int main() {
     test_tcp_via_winsock();
     test_connect_refused_shows_in_select();
     test_raw_socket_refused();
+    test_events_and_pending_overlapped();
     printf("%d checks, %d failures\n", g_checks, g_failures);
     mem_shutdown();
     return g_failures ? 1 : 0;

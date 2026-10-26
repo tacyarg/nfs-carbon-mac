@@ -36,6 +36,8 @@ enum : uint32_t {
     WSAESOCKTNOSUPPORT = 10044,
     WSANO_DATA = 11004,
     WSAHOST_NOT_FOUND = 11001,
+    WSA_IO_INCOMPLETE = 996,
+    WSA_IO_PENDING = 997,
     INVALID_SOCKET_ = 0xffffffffu,
     SOCKET_ERROR_ = 0xffffffffu,
 };
@@ -424,7 +426,42 @@ void w_gethostbyname(X86 *c) {
     set_eax(c, h);
 }
 void w_nodata(X86 *c) { fail(c, WSANO_DATA, 0); } // getservbyname/port, gethostbyaddr
-void w_notyet(X86 *c) { fail(c, WSAENOTSOCK, SOCKET_ERROR_); } // Task 4 replaces
+
+// WSAEVENT is a kernel32 event: manual reset, not signalled (WSACreateEvent's contract).
+void w_WSACreateEvent(X86 *c) {
+    uint32_t h = win32_create_event(true, false);
+    if (!h)
+        return fail(c, 10055 /* WSA_NOT_ENOUGH_MEMORY maps here */, 0);
+    set_eax(c, h);
+}
+// WaitForMultipleObjects plus an unused alertable flag; the same return values.
+void w_WSAWaitForMultipleEvents(X86 *c) {
+    uint32_t n = arg(c, 0), list = arg(c, 1), all = arg(c, 2), ms = arg(c, 3);
+    if (n == 0 || n > 64 || !gm_valid(list, n * 4))
+        return fail(c, WSAEINVAL, 0xffffffffu); // WSA_WAIT_FAILED
+    uint32_t handles[64];
+    for (uint32_t i = 0; i < n; ++i)
+        handles[i] = rd32(list + 4 * i);
+    lan_pump();
+    set_eax(c, guest_wait_objects(handles, n, all != 0, ms));
+}
+// Overlapped receive: only the UDP and raw sockets of the socket thread use it,
+// and the UDP stub never receives, so the receive stays posted. M2 completes it.
+void w_WSARecvAny(X86 *c) {
+    Sock *k = sock_of(arg(c, 0));
+    if (!k)
+        return fail(c, WSAENOTSOCK, SOCKET_ERROR_);
+    if (k->type == 1) {
+        log_once("tcp-overlapped-recv", "winsock: WSARecv/WSARecvFrom called on a TCP socket");
+        return fail(c, WSAEOPNOTSUPP, SOCKET_ERROR_); // ponytail: TCP overlapped is unused by Carbon
+    }
+    fail(c, WSA_IO_PENDING, SOCKET_ERROR_);
+}
+void w_WSAGetOverlappedResult(X86 *c) {
+    if (!sock_of(arg(c, 0)))
+        return fail(c, WSAENOTSOCK, 0);
+    fail(c, WSA_IO_INCOMPLETE, 0);
+}
 
 const ImportShim shims[] = {
     {"WS2_32.dll", "WSAStartup", 2, w_WSAStartup2},
@@ -462,15 +499,11 @@ const ImportShim shims[] = {
     {"WS2_32.dll", "setsockopt", 5, w_ok},        {"WS2_32.dll", "ord21", 5, w_ok},
     {"WS2_32.dll", "shutdown", 2, w_ok},          {"WS2_32.dll", "ord22", 2, w_ok},
     {"WS2_32.dll", "WSAIoctl", 9, w_listen_accept},
-    {"WS2_32.dll", "WSARecv", 7, w_notyet},
-    {"WS2_32.dll", "WSARecvFrom", 9, w_notyet},
-    {"WS2_32.dll", "WSAGetOverlappedResult", 5, w_notyet},
-    // Events: Task 4 fills these in.
-    {"WS2_32.dll", "WSACreateEvent", 0, nullptr},
-    {"WS2_32.dll", "WSACloseEvent", 1, nullptr},
-    {"WS2_32.dll", "WSASetEvent", 1, nullptr},
-    {"WS2_32.dll", "WSAResetEvent", 1, nullptr},
-    {"WS2_32.dll", "WSAWaitForMultipleEvents", 5, nullptr},
+    {"WS2_32.dll", "WSARecv", 7, w_WSARecvAny},
+    {"WS2_32.dll", "WSARecvFrom", 9, w_WSARecvAny},
+    {"WS2_32.dll", "WSAGetOverlappedResult", 5, w_WSAGetOverlappedResult},
+    {"WS2_32.dll", "WSACreateEvent", 0, w_WSACreateEvent},
+    {"WS2_32.dll", "WSAWaitForMultipleEvents", 5, w_WSAWaitForMultipleEvents},
     {"WS2_32.dll", "getservbyport", 2, w_nodata},
     {"WS2_32.dll", "getservbyname", 2, w_nodata},
     {"WS2_32.dll", "gethostbyaddr", 3, w_nodata},
