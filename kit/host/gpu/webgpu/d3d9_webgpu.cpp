@@ -16,6 +16,7 @@
 #include "webgpu_device.h"
 
 #include "../../../dx/d3d9_shader.h"
+#include "../../../dx/d3d9_volume.h"
 #include "../../../dx/d3d9_wgsl.h"
 #include "../../../dx/host_d9.h"
 #include "../../../platform/os.h"
@@ -246,7 +247,7 @@ struct WFmt {
 };
 
 // The kind of texture a stage binds, for the bind group layout.
-enum class Slot : uint8_t { None, Float2D, FloatCube, Depth2D };
+enum class Slot : uint8_t { None, Float2D, FloatCube, Depth2D, Float3D };
 
 struct Tex {
     HostD9TextureDesc desc{};
@@ -258,7 +259,7 @@ struct Tex {
     gpu::Texture imported;
     uint64_t used = 0; // the encoder serial that last read or wrote it
     float scale = 1.0f;
-    bool cube = false, depth = false;
+    bool cube = false, depth = false, volume = false;
     WGPUTexture msaa = nullptr;
     WGPUTextureView msaa_view = nullptr;
     uint32_t samples = 1;
@@ -311,8 +312,8 @@ class WebGpuRenderer final : public D9Backend {
         t = Tex{};
         t.desc = d;
         if (d.kind == HOST_D9_TEX_VOLUME) {
+            define_volume(t, d);
             index_texture(d.id, &t);
-            fprintf(stderr, "d3d9 webgpu: volume resources are not implemented\n");
             return;
         }
         t.info = format_for(d.format);
@@ -401,6 +402,34 @@ class WebGpuRenderer final : public D9Backend {
         index_texture(d.id, &t);
     }
 
+    // A volume is sampled only (never a target), uncompressed, as on Metal.
+    void define_volume(Tex &t, const HostD9TextureDesc &d) {
+        t.info = format_for(d.format);
+        if (!d9volume::extent(d.width, d.height, d.depth, d.levels) ||
+            !d9volume::pixel_bytes(d.format) || d.samples > 1 || d.usage ||
+            t.info.conv == Conv::Unsupported || t.info.block || t.info.depth) {
+            fprintf(stderr, "d3d9 webgpu: invalid/unsupported volume %u\n", d.id);
+            return;
+        }
+        t.volume = true;
+        t.width = d.width;
+        t.height = d.height;
+        t.levels = d.levels ? d.levels : d9volume::levels(d.width, d.height, d.depth);
+        WGPUTextureDescriptor td = WGPU_TEXTURE_DESCRIPTOR_INIT;
+        td.dimension = WGPUTextureDimension_3D;
+        td.size = {d.width, d.height, d.depth};
+        td.format = t.info.format;
+        td.mipLevelCount = t.levels;
+        td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+        t.texture = wgpuDeviceCreateTexture(device_, &td);
+        if (!t.texture)
+            return;
+        WGPUTextureViewDescriptor vd = WGPU_TEXTURE_VIEW_DESCRIPTOR_INIT;
+        vd.dimension = WGPUTextureViewDimension_3D;
+        vd.mipLevelCount = t.levels;
+        t.sample_view = wgpuTextureCreateView(t.texture, &vd);
+    }
+
     void drop(uint32_t id) override {
         auto it = textures_.find(id);
         if (it == textures_.end())
@@ -429,6 +458,23 @@ class WebGpuRenderer final : public D9Backend {
         dst.mipLevel = level;
         dst.origin = {0, 0, face};
         WGPUTexelCopyBufferLayout layout = WGPU_TEXEL_COPY_BUFFER_LAYOUT_INIT;
+        if (t.volume) { // one Z slice per call: `face` is its depth
+            if (face >= std::max(t.desc.depth >> level, 1u) ||
+                pitch < w * d9volume::pixel_bytes(t.desc.format))
+                return;
+            const uint8_t *src = bytes;
+            uint32_t row = pitch;
+            if (t.info.conv != Conv::Direct) {
+                convert(t.info.conv, bytes, w, h, pitch, scratch_);
+                src = scratch_.data();
+                row = w * 4;
+            }
+            layout.bytesPerRow = row;
+            layout.rowsPerImage = h;
+            WGPUExtent3D slice = {w, h, 1};
+            wgpuQueueWriteTexture(queue_, &dst, src, (size_t)row * h, &layout, &slice);
+            return;
+        }
         if (t.info.block) {
             const uint32_t bw = (w + 3) / 4, bh = (h + 3) / 4;
             scratch_.assign((size_t)bw * bh * t.info.bytes, 0);
@@ -539,11 +585,6 @@ class WebGpuRenderer final : public D9Backend {
         uint64_t ps_key = d.ps_key ? d.ps_key : d9sh::code_key(d.ps, d.ps_size);
         const d9sh::Program &vp = d9sh::program_for_key(vs_key, d.vs, d.vs_size);
         const d9sh::Program &pp = d9sh::program_for_key(ps_key, d.ps, d.ps_size);
-        for (const auto &binding : pp.samplers)
-            if (binding.second == d9sh::S_VOLUME) {
-                skip("volume samplers unsupported on this backend");
-                return;
-            }
         if (!vp.ok || !pp.ok) {
             skip("undecoded shader");
             return;
@@ -579,12 +620,18 @@ class WebGpuRenderer final : public D9Backend {
         for (uint32_t s = 0; s < 16; ++s) {
             slots[s] = Slot::None;
             if (used >> s & 1) {
+                const auto declared = pp.samplers.find(s);
+                const bool volume = pp.major >= 2 && declared != pp.samplers.end() &&
+                                    declared->second == d9sh::S_VOLUME;
                 const bool cube =
                     pp.major >= 2 ? (pp.cube_samplers >> s & 1) : (variant.cube_mask >> s & 1);
-                const bool depth = !cube && (variant.depth_mask >> s & 1);
-                slots[s] = cube ? Slot::FloatCube : depth ? Slot::Depth2D : Slot::Float2D;
+                const bool depth = !cube && !volume && (variant.depth_mask >> s & 1);
+                slots[s] = volume ? Slot::Float3D
+                           : cube ? Slot::FloatCube
+                           : depth ? Slot::Depth2D
+                                   : Slot::Float2D;
             }
-            slot_key = slot_key << 2 | (uint64_t)slots[s];
+            slot_key = slot_key << 3 | (uint64_t)slots[s];
         }
         WGPUShaderModule vmod = module(vs_key, vp, variant, false);
         WGPUShaderModule fmod = module(ps_key, pp, variant, true);
@@ -748,15 +795,16 @@ class WebGpuRenderer final : public D9Backend {
             if (slots[st] == Slot::None)
                 continue;
             Tex *t = bound[st];
-            const bool cube = slots[st] == Slot::FloatCube, depth = slots[st] == Slot::Depth2D;
+            const bool cube = slots[st] == Slot::FloatCube, depth = slots[st] == Slot::Depth2D,
+                       volume = slots[st] == Slot::Float3D;
             WGPUTextureView view = t ? t->sample_view : nullptr;
-            if (view && (t->cube != cube || t->depth != depth))
+            if (view && (t->cube != cube || t->depth != depth || t->volume != volume))
                 view = nullptr;
             if (view && pass_uses(t))
                 view = nullptr;
             if (view)
                 t->used = serial_;
-            gk.views[st] = view ? view : depth ? far_depth_view_ : placeholder(cube);
+            gk.views[st] = view ? view : depth ? far_depth_view_ : placeholder(cube, volume);
             gk.samplers[st] = depth ? shadow_sampler() : sampler(d.sampler_state + st * 14, t);
         }
         WGPUBindGroup group = bind_group(gk);
@@ -1496,7 +1544,8 @@ class WebGpuRenderer final : public D9Backend {
             t.texture.sampleType = slots[s] == Slot::Depth2D ? WGPUTextureSampleType_Depth
                                                              : WGPUTextureSampleType_Float;
             t.texture.viewDimension = slots[s] == Slot::FloatCube ? WGPUTextureViewDimension_Cube
-                                                                  : WGPUTextureViewDimension_2D;
+                                      : slots[s] == Slot::Float3D   ? WGPUTextureViewDimension_3D
+                                                                    : WGPUTextureViewDimension_2D;
             e.push_back(t);
             WGPUBindGroupLayoutEntry m = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
             m.binding = d9wgsl::kSamplerBinding + s;
@@ -1837,13 +1886,14 @@ class WebGpuRenderer final : public D9Backend {
         shadow_sampler_ = wgpuDeviceCreateSampler(device_, &sd);
         return shadow_sampler_;
     }
-    WGPUTextureView placeholder(bool cube) {
-        WGPUTextureView &v = cube ? black_cube_ : black_;
+    WGPUTextureView placeholder(bool cube, bool volume = false) {
+        WGPUTextureView &v = volume ? black_volume_ : cube ? black_cube_ : black_;
         if (v)
             return v;
         const uint32_t layers = cube ? 6 : 1;
         WGPUTextureDescriptor td = WGPU_TEXTURE_DESCRIPTOR_INIT;
         td.size = {1, 1, layers};
+        td.dimension = volume ? WGPUTextureDimension_3D : WGPUTextureDimension_2D;
         td.format = WGPUTextureFormat_BGRA8Unorm;
         td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
         WGPUTexture tex = wgpuDeviceCreateTexture(device_, &td);
@@ -1858,7 +1908,9 @@ class WebGpuRenderer final : public D9Backend {
             wgpuQueueWriteTexture(queue_, &dst, black, 4, &layout, &one);
         }
         WGPUTextureViewDescriptor vd = WGPU_TEXTURE_VIEW_DESCRIPTOR_INIT;
-        vd.dimension = cube ? WGPUTextureViewDimension_Cube : WGPUTextureViewDimension_2D;
+        vd.dimension = volume ? WGPUTextureViewDimension_3D
+                       : cube ? WGPUTextureViewDimension_Cube
+                              : WGPUTextureViewDimension_2D;
         vd.arrayLayerCount = layers;
         v = wgpuTextureCreateView(tex, &vd);
         return v;
@@ -2209,7 +2261,8 @@ class WebGpuRenderer final : public D9Backend {
     std::unordered_map<uint64_t, WGPUSampler> samplers_;
     WGPUSampler shadow_sampler_ = nullptr;
     std::unordered_map<uint64_t, WGPUTextureView> fitted_;
-    WGPUTextureView black_ = nullptr, black_cube_ = nullptr, far_depth_view_ = nullptr;
+    WGPUTextureView black_ = nullptr, black_cube_ = nullptr, black_volume_ = nullptr,
+                    far_depth_view_ = nullptr;
     std::vector<uint8_t> scratch_, packed_, pad_, uniform_bytes_;
     std::vector<uint32_t> fan_;
     std::unordered_map<uint32_t, Query> queries_;
