@@ -389,7 +389,7 @@ async function start() {
   device.addEventListener("uncapturederror", (e) => console.error("WebGPU:", e.error.message));
 
   const lan = await lanConnect();
-  netEl.textContent = lan ? `Online ${vipText(lan.vip)}` : "Offline";
+  netEl.textContent = lan ? "Online" : "Offline";
   console.log(lan ? `lan: on the virtual network as ${vipText(lan.vip)}` : "lan: offline");
   const exe = streamed ? `/data/${game.executable}` : `/opfs/${id}/game/${game.executable}`;
   const Module = {
