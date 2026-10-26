@@ -185,6 +185,107 @@ static void test_connect_times_out() {
     lan_tcp_close(h);
 }
 
+// A sockaddr_in for 10.77.0.1:port at guest address a.
+static uint32_t server_addr(uint32_t a, uint16_t port) {
+    memset(g_mem + a, 0, 16);
+    wr16(a, 2);                                           // AF_INET
+    wr16(a + 2, (uint16_t)((port >> 8) | (port << 8)));  // network order
+    wr32(a + 4, 0x01004D0Au);                             // 10.77.0.1 as bytes 10,77,0,1
+    return a;
+}
+static uint32_t fdset(uint32_t a, uint32_t s) {
+    wr32(a, 1);
+    wr32(a + 4, s);
+    return a;
+}
+
+static void test_gethostbyname_rule() {
+    X86 c;
+    loader_init_context(&c);
+    page_online(ME);
+    gm_put_str(SCRATCH + 0x100, "nfs-pc.FESL.ea.com", 64);
+    uint32_t he = ws(&c, "gethostbyname", {SCRATCH + 0x100});
+    check(he != 0, "an EA host name resolves when online");
+    uint32_t addr = he ? rd32(rd32(he + 12)) : 0; // h_addr_list[0]
+    check(he && rd16(he + 8) == 2 && rd16(he + 10) == 4 && addr && rd32(addr) == 0x01004D0Au,
+          "to 10.77.0.1 (AF_INET, 4 bytes)");
+    gm_put_str(SCRATCH + 0x100, "example.com", 64);
+    check(ws(&c, "gethostbyname", {SCRATCH + 0x100}) == 0 && ws(&c, "WSAGetLastError", {}) == 11001,
+          "any other name is WSAHOST_NOT_FOUND");
+    gm_put_str(SCRATCH + 0x100, "10.77.0.9", 64);
+    he = ws(&c, "gethostbyname", {SCRATCH + 0x100});
+    check(he && rd32(rd32(rd32(he + 12))) == 0x09004D0Au, "a dotted address answers itself");
+}
+
+static void test_tcp_via_winsock() {
+    X86 c;
+    loader_init_context(&c);
+    net_mailbox *m = page_online(ME);
+    uint32_t s = ws(&c, "socket", {2, 1, 6});
+    check(s != INVALID_SOCKET_ && s != 0, "socket(TCP) online gives a SOCKET");
+    wr32(SCRATCH, 1);
+    check(ws(&c, "ioctlsocket", {s, 0x8004667eu, SCRATCH}) == 0, "FIONBIO on");
+    check(ws(&c, "connect", {s, server_addr(SCRATCH + 0x10, 18210), 16}) == 0xffffffffu &&
+              ws(&c, "WSAGetLastError", {}) == 10035,
+          "non-blocking connect is WSAEWOULDBLOCK");
+    net_slot *syn = tx_take(m);
+    check(syn && syn->data[0] == NET_LAN_TCP_SYN && syn->dst_port == 18210, "and sent a SYN to port 18210");
+    check(ws(&c, "connect", {s, SCRATCH + 0x10, 16}) == 0xffffffffu && ws(&c, "WSAGetLastError", {}) == 10037,
+          "connect again while pending is WSAEALREADY");
+    rx_put(m, 18210, syn ? syn->src_port : 0, NET_LAN_TCP_SYNACK, syn ? cid_of(syn) : 0);
+    wr32(SCRATCH + 0x40, 0); // timeval {0, 0}: poll
+    wr32(SCRATCH + 0x44, 0);
+    check(ws(&c, "select", {0, 0, fdset(SCRATCH + 0x100, s), 0, SCRATCH + 0x40}) == 1,
+          "select reports the connected socket writable");
+    check(ws(&c, "getpeername", {s, SCRATCH + 0x60, (wr32(SCRATCH + 0x70, 16), SCRATCH + 0x70)}) == 0 &&
+              rd32(SCRATCH + 0x64) == 0x01004D0Au,
+          "getpeername names 10.77.0.1");
+    memcpy(g_mem + SCRATCH + 0x200, "fsys", 4);
+    check(ws(&c, "send", {s, SCRATCH + 0x200, 4, 0}) == 4, "send returns 4");
+    net_slot *d = tx_take(m);
+    check(d && d->data[0] == NET_LAN_TCP_DATA && memcmp(d->data + NET_LAN_HDR, "fsys", 4) == 0, "as DATA");
+    check(ws(&c, "recv", {s, SCRATCH + 0x300, 64, 0}) == 0xffffffffu && ws(&c, "WSAGetLastError", {}) == 10035,
+          "recv with nothing there is WSAEWOULDBLOCK");
+    rx_put(m, 18210, syn ? syn->src_port : 0, NET_LAN_TCP_DATA, syn ? cid_of(syn) : 0, "acct");
+    check(ws(&c, "select", {0, fdset(SCRATCH + 0x100, s), 0, 0, SCRATCH + 0x40}) == 1, "select: readable");
+    check(ws(&c, "recv", {s, SCRATCH + 0x300, 64, 0}) == 4 && memcmp(g_mem + SCRATCH + 0x300, "acct", 4) == 0,
+          "recv returns the server's bytes");
+    check(ws(&c, "closesocket", {s}) == 0, "closesocket");
+    net_slot *f = tx_take(m);
+    check(f && f->data[0] == NET_LAN_TCP_FIN, "sends FIN");
+    check(ws(&c, "send", {s, SCRATCH + 0x200, 4, 0}) == 0xffffffffu && ws(&c, "WSAGetLastError", {}) == 10038,
+          "a closed SOCKET is WSAENOTSOCK");
+}
+
+static void test_connect_refused_shows_in_select() {
+    X86 c;
+    loader_init_context(&c);
+    net_mailbox *m = page_online(ME);
+    uint32_t s = ws(&c, "socket", {2, 1, 6});
+    wr32(SCRATCH, 1);
+    ws(&c, "ioctlsocket", {s, 0x8004667eu, SCRATCH});
+    ws(&c, "connect", {s, server_addr(SCRATCH + 0x10, 18299), 16});
+    net_slot *syn = tx_take(m);
+    rx_put(m, 18299, syn ? syn->src_port : 0, NET_LAN_TCP_RST, syn ? cid_of(syn) : 0);
+    wr32(SCRATCH + 0x40, 0);
+    wr32(SCRATCH + 0x44, 0);
+    check(ws(&c, "select", {0, 0, 0, fdset(SCRATCH + 0x100, s), SCRATCH + 0x40}) == 1,
+          "a refused connect shows in the except set");
+    wr32(SCRATCH + 0x80, 4);
+    check(ws(&c, "getsockopt", {s, 0xffff, 0x1007, SCRATCH + 0x84, SCRATCH + 0x80}) == 0 &&
+              rd32(SCRATCH + 0x84) == 10061,
+          "SO_ERROR is WSAECONNREFUSED");
+    ws(&c, "closesocket", {s});
+}
+
+static void test_raw_socket_refused() {
+    X86 c;
+    loader_init_context(&c);
+    page_online(ME);
+    check(ws(&c, "socket", {2, 3, 1}) == INVALID_SOCKET_ && ws(&c, "WSAGetLastError", {}) == 10013,
+          "a raw socket is WSAEACCES, as for a Windows user without admin rights");
+}
+
 int main() {
     mem_init();
     imports_init();
@@ -194,6 +295,10 @@ int main() {
     test_refused_and_unknown();
     test_offline_resets_connections();
     test_connect_times_out();
+    test_gethostbyname_rule();
+    test_tcp_via_winsock();
+    test_connect_refused_shows_in_select();
+    test_raw_socket_refused();
     printf("%d checks, %d failures\n", g_checks, g_failures);
     mem_shutdown();
     return g_failures ? 1 : 0;
