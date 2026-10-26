@@ -38,6 +38,7 @@
 #include "pop_mod_api.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 POP_MOD_DECLARE_ABI();
