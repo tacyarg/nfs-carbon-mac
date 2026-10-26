@@ -351,10 +351,12 @@ function vipText(vip) { return `${vip >>> 24}.${(vip >> 16) & 255}.${(vip >> 8) 
 async function start() {
   if (!crossOriginIsolated) throw new Error("This page must be served cross-origin isolated (COOP/COEP headers).");
   if (!navigator.gpu) throw new Error("This browser has no WebGPU.");
-  const id = await gameId();
+  let id = await gameId();
   const games = await fetch("../games.json").then((r) => r.json());
-  const game = games.find((g) => g.id === id);
+  // at the site's root (a one-game site) the path names no game: the only one listed is it
+  const game = games.find((g) => g.id === id) || (!id && games.length === 1 ? games[0] : undefined);
   if (!game) throw new Error(`No game "${id}" in the launcher's games.json.`);
+  id = game.id;
   document.title = game.title;
   document.getElementById("title").textContent = game.title;
 
