@@ -1,5 +1,5 @@
 /**
- * recomp-kit: Emscripten's src/lib/libwasmfs_fetch.js (MIT, Emscripten 6.0.13) with one fix,
+ * recomp-kit: Emscripten's src/lib/libwasmfs_fetch.js (MIT, Emscripten 6.0.13) with two fixes,
  * marked below; linked with --js-library, it replaces the built-in one.
  */
 /**
@@ -27,7 +27,10 @@ addToLibrary({
     async function getFileRange(file, offset, len) {
       var url = '';
       var fileUrl_p = __wasmfs_fetch_get_file_url(file);
-      var fileUrl = UTF8ToString(fileUrl_p);
+      // recomp-kit: the C++ getFileURL joins baseUrl + "/" + filePath and filePath
+      // already starts with "/", so every streamed file URL carries "//"; strict
+      // servers (ours) reject that. Collapse repeated slashes, but keep "://" intact.
+      var fileUrl = UTF8ToString(fileUrl_p).replace(/([^:])\/{2,}/g, '$1/');
       var isAbs = fileUrl.indexOf('://') !== -1;
       if (isAbs) {
         url = fileUrl;
