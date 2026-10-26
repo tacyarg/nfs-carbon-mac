@@ -65,17 +65,6 @@ static void online_title_params(const PopModApi *api, pop_cpu_v1 *cpu, PopHookIn
 }
 
 static void online_install(void) {
-    /* FESL as plain TCP: 008df480 returns the title parameters (this + 0x4c);
-     * 0093e210 logs their options word at +0x10, bit 0x1 being SSL_OVERRIDE_OFF.
-     * Set it each time the struct is handed out (idempotent) when the page
-     * asked (fesl_plain).
-     *
-     * ponytail: FUN_008df480 has ~25 call sites and the decompile does not
-     * show whether every caller passes the same object in ECX (the returned
-     * pointer); writing the wrong object's +0x10 would corrupt unrelated
-     * memory. Until Task 8's live capture settles it, the hook only ever
-     * writes to the FIRST pointer it observes and just logs (once) any
-     * different pointer it sees, without touching it. */
     if (setting("fesl_plain", 0) && install(TITLE_PARAMS_GET, online_title_params, POP_HOOK_AFTER, 24) == POP_OK)
         log_line("core.nfsc: FESL set to plain TCP (SSL_OVERRIDE_OFF)");
     if (!setting("hide_online", 1))
