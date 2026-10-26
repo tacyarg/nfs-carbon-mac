@@ -1106,27 +1106,6 @@ void w_inet_ntoa(X86 *c) {
     set_eax(c, buf);
 }
 
-// Need for Speed Carbon (ws2_32 by name, advapi32, rpcrt4, ole32). Online
-// play is gone, so these only have to answer the probes the game makes at
-// start-up: an admin check, a random seed and a GUID for the profile.
-void w_htons(X86 *c) {
-    uint32_t v = arg(c, 0) & 0xffff;
-    set_eax(c, ((v & 0xff) << 8) | (v >> 8));
-}
-void w_htonl(X86 *c) {
-    uint32_t v = arg(c, 0);
-    set_eax(c, (v >> 24) | ((v >> 8) & 0xff00) | ((v << 8) & 0xff0000) | (v << 24));
-}
-void w_inet_addr(X86 *c) {
-    unsigned a, b, cc, d;
-    char tail;
-    std::string text = gm_str(arg(c, 0), 64);
-    if (sscanf(text.c_str(), "%u.%u.%u.%u%c", &a, &b, &cc, &d, &tail) == 4 && a < 256 && b < 256 &&
-        cc < 256 && d < 256)
-        set_eax(c, a | (b << 8) | (cc << 16) | (d << 24)); // network byte order
-    else
-        set_eax(c, 0xffffffffu); // INADDR_NONE
-}
 void fill_random(uint32_t p, uint32_t n) {
     static uint64_t state = 0;
     if (!state)
@@ -2302,71 +2281,6 @@ const ImportShim g_misc_shims[] = {
     {"TAPI32.dll", "lineNegotiateAPIVersion", 6, nullptr},
     {"TAPI32.dll", "lineOpen", 9, nullptr},
     {"TAPI32.dll", "lineShutdown", 1, nullptr},
-    // Winsock 2: networking is out of scope, but the pop counts are not.
-    // Legacy Winsock 2 ordinals for the named APIs registered below. Ordinals
-    // belong to WS2_32's export table; do not infer them from WSOCK32's table.
-    {"WS2_32.dll", "ord1", 3, nullptr},   // accept
-    {"WS2_32.dll", "ord2", 3, nullptr},   // bind
-    {"WS2_32.dll", "ord3", 1, nullptr},   // closesocket
-    {"WS2_32.dll", "ord4", 3, nullptr},   // connect
-    {"WS2_32.dll", "ord5", 3, nullptr},   // getpeername
-    {"WS2_32.dll", "ord6", 3, nullptr},   // getsockname
-    {"WS2_32.dll", "ord7", 5, nullptr},   // getsockopt
-    {"WS2_32.dll", "ord10", 3, nullptr},  // ioctlsocket
-    {"WS2_32.dll", "ord13", 2, nullptr},  // listen
-    {"WS2_32.dll", "ord16", 4, nullptr},  // recv
-    {"WS2_32.dll", "ord17", 6, nullptr},  // recvfrom
-    {"WS2_32.dll", "ord18", 5, nullptr},  // select
-    {"WS2_32.dll", "ord19", 4, nullptr},  // send
-    {"WS2_32.dll", "ord20", 6, nullptr},  // sendto
-    {"WS2_32.dll", "ord21", 5, nullptr},  // setsockopt
-    {"WS2_32.dll", "ord22", 2, nullptr},  // shutdown
-    {"WS2_32.dll", "ord23", 3, nullptr},  // socket
-    {"WS2_32.dll", "ord52", 1, nullptr},  // gethostbyname
-    {"WS2_32.dll", "ord57", 2, nullptr},  // gethostname
-    {"WS2_32.dll", "ord111", 0, nullptr}, // WSAGetLastError
-    {"WS2_32.dll", "ord115", 2, nullptr}, // WSAStartup
-    {"WS2_32.dll", "ord116", 0, nullptr}, // WSACleanup
-    {"WS2_32.dll", "WSAStartup", 2, nullptr},
-    {"WS2_32.dll", "WSACleanup", 0, nullptr},
-    {"WS2_32.dll", "WSAGetLastError", 0, nullptr},
-    {"WS2_32.dll", "WSAIoctl", 9, nullptr},
-    {"WS2_32.dll", "WSACreateEvent", 0, nullptr},
-    {"WS2_32.dll", "WSACloseEvent", 1, nullptr},
-    {"WS2_32.dll", "WSASetEvent", 1, nullptr},
-    {"WS2_32.dll", "WSAResetEvent", 1, nullptr},
-    {"WS2_32.dll", "WSAWaitForMultipleEvents", 5, nullptr},
-    {"WS2_32.dll", "WSARecv", 7, nullptr},
-    {"WS2_32.dll", "WSARecvFrom", 9, nullptr},
-    {"WS2_32.dll", "WSAGetOverlappedResult", 5, nullptr},
-    {"WS2_32.dll", "socket", 3, nullptr},
-    {"WS2_32.dll", "bind", 3, nullptr},
-    {"WS2_32.dll", "connect", 3, nullptr},
-    {"WS2_32.dll", "listen", 2, nullptr},
-    {"WS2_32.dll", "accept", 3, nullptr},
-    {"WS2_32.dll", "send", 4, nullptr},
-    {"WS2_32.dll", "recv", 4, nullptr},
-    {"WS2_32.dll", "sendto", 6, nullptr},
-    {"WS2_32.dll", "recvfrom", 6, nullptr},
-    {"WS2_32.dll", "select", 5, nullptr},
-    {"WS2_32.dll", "shutdown", 2, nullptr},
-    {"WS2_32.dll", "closesocket", 1, nullptr},
-    {"WS2_32.dll", "ioctlsocket", 3, nullptr},
-    {"WS2_32.dll", "getsockopt", 5, nullptr},
-    {"WS2_32.dll", "setsockopt", 5, nullptr},
-    {"WS2_32.dll", "getpeername", 3, nullptr},
-    {"WS2_32.dll", "getsockname", 3, nullptr},
-    {"WS2_32.dll", "gethostbyname", 1, nullptr},
-    {"WS2_32.dll", "gethostname", 2, nullptr},
-    {"WS2_32.dll", "htons", 1, w_htons},
-    {"WS2_32.dll", "htonl", 1, w_htonl},
-    {"WS2_32.dll", "ntohs", 1, w_htons},
-    {"WS2_32.dll", "ntohl", 1, w_htonl},
-    {"WS2_32.dll", "inet_addr", 1, w_inet_addr},
-    {"WS2_32.dll", "inet_ntoa", 1, w_inet_ntoa},
-    {"WS2_32.dll", "getservbyport", 2, nullptr},
-    {"WS2_32.dll", "getservbyname", 2, nullptr},
-    {"WS2_32.dll", "gethostbyaddr", 3, nullptr},
     {"ADVAPI32.dll", "AllocateAndInitializeSid", 11, a_AllocateAndInitializeSid},
     {"ADVAPI32.dll", "CheckTokenMembership", 3, a_CheckTokenMembership},
     {"ADVAPI32.dll", "FreeSid", 1, nullptr},

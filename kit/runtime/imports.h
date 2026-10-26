@@ -73,6 +73,7 @@ void oleaut32_register();
 void misc_dlls_register();
 void comctl32_register();
 void media_foundation_register();
+void winsock_register();
 
 // Allocates (or returns the existing) trampoline for dll!name. If a shim was
 // registered under that name its fn/argc win unless a non-null fn is passed
