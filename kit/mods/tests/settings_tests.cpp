@@ -56,6 +56,24 @@ MOD_TEST_SUITE(settings_declare_and_round_trip) {
     MOD_CHECK_EQ(v, 4); // the persisted value beats the default
 }
 
+// The page sets RECOMP_SETTING_<key> for this run only (e.g. hide_online off
+// when its server answers); the stored value is untouched underneath it.
+MOD_TEST_SUITE(settings_env_overrides_a_setting) {
+    fresh();
+    int64_t v = 0;
+    mods_settings_declare(2, "a.mod", "hide_online", "Hide online", POP_SETTING_BOOL, 1, 0, 1);
+    os_setenv("RECOMP_SETTING_hide_online", "0");
+    MOD_CHECK_EQ(mods_settings_get(2, "hide_online", &v), POP_OK);
+    MOD_CHECK_EQ(v, 0);
+    os_setenv("RECOMP_SETTING_hide_online", "7"); // out of range: ignored
+    MOD_CHECK_EQ(mods_settings_get(2, "hide_online", &v), POP_OK);
+    MOD_CHECK_EQ(v, 1);
+    os_setenv("RECOMP_SETTING_hide_online", "");
+    MOD_CHECK_EQ(mods_settings_get(2, "hide_online", &v), POP_OK);
+    MOD_CHECK_EQ(v, 1);
+    mods_settings_reset();
+}
+
 MOD_TEST_SUITE(settings_host_display_survives_page_reinit_and_profile_reload) {
     fresh();
     mods_host_set_main_thread();

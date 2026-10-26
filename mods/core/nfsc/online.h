@@ -24,7 +24,60 @@ static void online_add_item(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvoca
     api->call_original(api, cpu->target, cpu);
 }
 
+/* FESL as plain TCP: 008df480 returns the title parameters (this + 0x4c); 0093e210
+ * logs their options word at +0x10, bit 0x1 being SSL_OVERRIDE_OFF. Set it each
+ * time the struct is handed out (idempotent) when the page asked (fesl_plain). */
+#define TITLE_PARAMS_GET 0x008df480u
+#define TITLE_OPTIONS_OFF 0x10u
+#define TITLE_SSL_OVERRIDE_OFF 0x1u
+
+/* ponytail: FUN_008df480 has ~25 call sites and the decompile does not show
+ * whether every caller passes the same object in ECX; writing bit 0x1 into
+ * the wrong object's +0x10 would corrupt unrelated memory. Until Task 8's
+ * live capture settles it, the hook only ever writes to the FIRST pointer it
+ * observes (set below, only while fesl_plain is on) and just logs once -
+ * separately - any different pointer it sees, without touching it. */
+static uint32_t g_title_params_first;
+static int g_title_params_other_logged;
+
+static void online_title_params(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocation *inv, void *user) {
+    (void)api;
+    (void)inv;
+    (void)user;
+    const uint32_t ptr = cpu->eax;
+    char line[96];
+    if (!g_title_params_first) {
+        g_title_params_first = ptr;
+        snprintf(line, sizeof line, "core.nfsc: title params struct first seen at %08x", ptr);
+        log_line(line);
+    }
+    if (ptr != g_title_params_first) {
+        if (!g_title_params_other_logged) {
+            g_title_params_other_logged = 1;
+            snprintf(line, sizeof line, "core.nfsc: FUN_008df480 also returned %08x (first was %08x), not touched",
+                     ptr, g_title_params_first);
+            log_line(line);
+        }
+        return;
+    }
+    const uint32_t at = ptr + TITLE_OPTIONS_OFF;
+    put_u32(at, get_u32(at) | TITLE_SSL_OVERRIDE_OFF);
+}
+
 static void online_install(void) {
+    /* FESL as plain TCP: 008df480 returns the title parameters (this + 0x4c);
+     * 0093e210 logs their options word at +0x10, bit 0x1 being SSL_OVERRIDE_OFF.
+     * Set it each time the struct is handed out (idempotent) when the page
+     * asked (fesl_plain).
+     *
+     * ponytail: FUN_008df480 has ~25 call sites and the decompile does not
+     * show whether every caller passes the same object in ECX (the returned
+     * pointer); writing the wrong object's +0x10 would corrupt unrelated
+     * memory. Until Task 8's live capture settles it, the hook only ever
+     * writes to the FIRST pointer it observes and just logs (once) any
+     * different pointer it sees, without touching it. */
+    if (setting("fesl_plain", 0) && install(TITLE_PARAMS_GET, online_title_params, POP_HOOK_AFTER, 24) == POP_OK)
+        log_line("core.nfsc: FESL set to plain TCP (SSL_OVERRIDE_OFF)");
     if (!setting("hide_online", 1))
         return;
     if (install(FE_ADD_ITEM, online_add_item, POP_HOOK_REPLACE, 18) != POP_OK)

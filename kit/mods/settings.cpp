@@ -297,6 +297,13 @@ PopModStatus mods_settings_get(uint32_t owner, const char *key, int64_t *out) {
     if (!e)
         return POP_E_NOTFOUND;
     *out = e->value;
+    // The page may set a value for this run only (RECOMP_SETTING_<key>, e.g. the
+    // player page turning hide_online off when its server answers); not stored.
+    const char *env = recomp_env(("SETTING_" + std::string(key)).c_str());
+    char *end = nullptr;
+    long long v = env && *env ? strtoll(env, &end, 10) : 0;
+    if (env && *env && end && !*end && v >= e->min && v <= e->max)
+        *out = v;
     return POP_OK;
 }
 
