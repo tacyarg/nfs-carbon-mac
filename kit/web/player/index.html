@@ -3,37 +3,100 @@
      with @APP@.js/.wasm/.data, in <launcher>/<game id>/; the game's files were
      imported by the launcher into the browser's private storage at
      <game id>/game, and the profile lives at <game id>/profile. The page must
-     be served cross-origin isolated (COOP same-origin, COEP require-corp). -->
+     be served cross-origin isolated (COOP same-origin, COEP require-corp).
+
+     The landing phase (#landing) below is laid out after nfsu2.xyz's
+     (nfsu2-web web/index.html + web/src/static/main.css; MIT, Copyright (c)
+     2026 th0mk; portions (c) 2026 Talha Müderrisoğlu): a header with the
+     title and the EA disclaimer, a thin load progress bar, a hero panel with
+     a status line and a Play button, and a Controls panel. No code or CSS
+     rules were copied from it; this is an independent implementation of the
+     same layout. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>@TITLE@</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #000; color: #ddd; font: 14px system-ui, sans-serif; overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: #0b0b0c; color: #ddd; font: 14px/1.5 system-ui, sans-serif; overflow: hidden; }
   #canvas { display: block; width: 100vw; height: 100vh; outline: none; }
-  #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-            text-align: center; padding: 0 16px; white-space: pre-line; pointer-events: none; }
-  #status a { pointer-events: auto; color: #8cf; }
+  #landing { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
+             background: #0b0b0c; overflow-y: auto; }
+  #landing[hidden] { display: none; }
+  #landing header { width: 100%; max-width: 640px; padding: 24px 20px 0; box-sizing: border-box; }
+  #landing h1 { margin: 0; font-size: 22px; letter-spacing: 0.02em; color: #fff; }
+  #landing .fan { margin: 6px 0 16px; font-size: 12px; color: #888; }
+  .bar { height: 3px; background: #222; border-radius: 2px; overflow: hidden; }
+  .bar-fill { height: 100%; width: 0%; background: #8cf08c; transition: width 0.2s linear; }
+  .hero { width: 100%; max-width: 640px; padding: 28px 20px; box-sizing: border-box; text-align: center; }
+  .hero .line { margin: 0; font-size: 18px; color: #fff; }
+  .hero .sub { margin: 4px 0 20px; font-size: 13px; color: #999; white-space: pre-line; }
+  .hero .sub.err { color: #f08c8c; }
+  #play { font: inherit; font-size: 17px; font-weight: 600; padding: 12px 36px; border-radius: 8px;
+          border: none; background: #8cf08c; color: #0b0b0c; cursor: pointer; }
+  #play:disabled { background: #333; color: #777; cursor: default; }
+  #play:focus-visible { outline: 2px solid #8cf08c; outline-offset: 3px; }
+  #play kbd { font: inherit; opacity: 0.6; margin-left: 6px; }
+  .net { margin: 14px 0 0; font-size: 12px; color: #777; }
+  .back { color: #8cf0e0; }
+  .panel { width: 100%; max-width: 640px; padding: 0 20px 28px; box-sizing: border-box; }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: #999; margin: 0 0 10px; }
+  .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+  .keys dt { white-space: nowrap; }
+  .keys dd { margin: 0; color: #aaa; }
+  kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px solid #444; border-radius: 4px;
+        background: #1a1a1c; font: 12px/1.6 system-ui, sans-serif; text-align: center; }
+  .hint { font-size: 12px; color: #777; margin: 12px 0 0; }
 </style>
 </head>
 <body>
 <canvas id="canvas" tabindex="-1"></canvas>
-<div id="status">Loading…</div>
+<div id="landing">
+  <header>
+    <h1 id="title">@TITLE@</h1>
+    <p class="fan">Fan project. Not affiliated with or endorsed by Electronic Arts.</p>
+    <div class="bar" id="bar" hidden><div class="bar-fill" id="bar-fill"></div></div>
+  </header>
+  <section class="hero">
+    <p class="line" id="line">Loading</p>
+    <p class="sub" id="sub">Loading the game.</p>
+    <button type="button" id="play" disabled>Play <kbd>Enter</kbd></button>
+    <p class="net" id="net"></p>
+  </section>
+  <section class="panel">
+    <h2>Controls</h2>
+    <dl class="keys">
+      <div><dt><kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&larr;</kbd> <kbd>&rarr;</kbd></dt><dd>Menus</dd></div>
+      <div><dt><kbd>Enter</kbd></dt><dd>Select</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Back, pause</dd></div>
+    </dl>
+    <p class="hint">Change keys in the game's Options, Controls.</p>
+  </section>
+</div>
 <script>
 "use strict";
-const statusEl = document.getElementById("status");
 const canvas = document.getElementById("canvas");
-function status(text, back) {
-  statusEl.textContent = text;
-  if (back) {
-    const a = document.createElement("a");
-    a.href = "../";
-    a.textContent = "\nBack to the launcher";
-    statusEl.append(document.createElement("br"), a);
-  }
-  statusEl.hidden = !text;
+const landing = document.getElementById("landing");
+const lineEl = document.getElementById("line");
+const subEl = document.getElementById("sub");
+const playBtn = document.getElementById("play");
+const barEl = document.getElementById("bar");
+const barFillEl = document.getElementById("bar-fill");
+const netEl = document.getElementById("net");
+const autoplay = new URLSearchParams(location.search).has("play");
+
+function showLanding() { landing.hidden = false; }
+function hideLanding() { landing.hidden = true; }
+
+// Loading/ready/error line, shown in the hero panel. An error always re-shows
+// the landing instead of leaving a black canvas behind it.
+function status(text, isError) {
+  lineEl.textContent = isError ? "Could not start" : (text ? "Loading" : "Ready");
+  subEl.textContent = text;
+  subEl.classList.toggle("err", !!isError);
+  if (isError) { playBtn.disabled = true; showLanding(); }
 }
+
 const log = [];
 window.recompLog = log; // for tests
 
@@ -130,6 +193,15 @@ function lanBridge(Module, { ws, vip }) {
   };
 }
 
+// The URL to return to on quit: this page, without ?play so the landing shows
+// instead of starting the game straight back up.
+function landingUrl() {
+  const q = new URLSearchParams(location.search);
+  q.delete("play");
+  const s = q.toString();
+  return location.pathname + (s ? `?${s}` : "");
+}
+
 async function start() {
   if (!crossOriginIsolated) throw new Error("This page must be served cross-origin isolated (COOP/COEP headers).");
   if (!navigator.gpu) throw new Error("This browser has no WebGPU.");
@@ -138,6 +210,7 @@ async function start() {
   const game = games.find((g) => g.id === id);
   if (!game) throw new Error(`No game "${id}" in the launcher's games.json.`);
   document.title = game.title;
+  document.getElementById("title").textContent = game.title;
 
   // A streamed game (web_launcher.py --stream) is served beside this page in
   // data/; otherwise the launcher must have imported it first.
@@ -168,15 +241,43 @@ async function start() {
   device.addEventListener("uncapturederror", (e) => console.error("WebGPU:", e.error.message));
 
   const lan = await lanConnect();
+  netEl.textContent = lan ? "Online (on this server's network)" : "Offline (single player)";
   console.log(lan ? `lan: on the virtual network as ${lan.vip >>> 24}.${(lan.vip >> 16) & 255}.${(lan.vip >> 8) & 255}.${lan.vip & 255}` : "lan: offline");
   const exe = streamed ? `/data/${game.executable}` : `/opfs/${id}/game/${game.executable}`;
   const Module = {
     canvas,
+    exe,
     preinitializedWebGPUDevice: device,
     noInitialRun: true,
+    // Lets Module.onExit fire when the game calls exit() (kernel32.cpp
+    // ExitProcess), even though the build links -sEXIT_RUNTIME=0: without
+    // this, Emscripten's keepRuntimeAlive() stays true and the runtime never
+    // reports the exit, so the page would be stuck on a dead canvas instead
+    // of returning to the landing.
+    noExitRuntime: false,
+    onExit: () => location.replace(landingUrl()),
     print: (t) => { log.push(t); console.log(t); },
-    printErr: (t) => { log.push(t); console.warn(t); },
-    setStatus: (t) => status(t ? t : ""),
+    printErr: (t) => {
+      log.push(t); console.warn(t);
+      // The native side's own exit log (loader.cpp, right after the guest
+      // process's entry point returns): the one page-visible signal that the
+      // game quit, since this build's -sEXIT_RUNTIME=0 keeps Emscripten's own
+      // runtime "alive" forever, so Module.onExit never fires (the exact
+      // reason: _proc_exit in the generated JS only calls onExit when
+      // !keepRuntimeAlive(), and keepRuntimeAlive() is hardcoded true by that
+      // build flag; Module.noExitRuntime cannot turn it back off, since the
+      // generated code only honors a truthy override, never a falsy one). A
+      // log-text match is a soft signal: if this message ever changes or is
+      // filtered out, this stops firing and the page needs a real export
+      // instead (an EM_JS call at the same spot in loader.cpp).
+      if (/guest process exited with code/.test(t)) location.replace(landingUrl());
+    },
+    setStatus: (t) => {
+      const m = /\((\d+)\/(\d+)\)/.exec(t || "");
+      barEl.hidden = !m;
+      if (m) barFillEl.style.width = `${(100 * m[1]) / m[2]}%`;
+      status(t || "");
+    },
     onAbort: (what) => status(`The game stopped: ${what}`, true),
     preRun: [() => {
       const m = Module;
@@ -192,8 +293,8 @@ async function start() {
     }],
     onRuntimeInitialized() {
       status("");
-      canvas.focus();
-      Module.callMain([`--exe=${exe}`]);
+      playBtn.disabled = false;
+      if (autoplay) play();
     },
   };
   window.Module = Module;
@@ -204,8 +305,17 @@ async function start() {
   document.body.append(script);
 }
 
+function play() {
+  if (playBtn.disabled) return;
+  hideLanding();
+  canvas.focus();
+  window.Module.callMain([`--exe=${window.Module.exe}`]);
+}
+
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("click", () => canvas.focus());
+playBtn.addEventListener("click", play);
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" && !playBtn.disabled && !landing.hidden) play(); });
 start().catch((e) => status(e.message, true));
 </script>
 </body>
