@@ -79,8 +79,8 @@
   .fan { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
 
   /* tab strip: always visible, teal-dashed edges, yellow end chevrons; the
-     fill is the load progress while loading, and underlies the PLAY/network
-     tabs once ready. Non-interactive: no destinations exist to navigate to. */
+     fill is the load progress while loading and goes away once ready, leaving
+     Carbon's black tab bar with the PLAY/network tabs. Non-interactive: no destinations exist to navigate to. */
   .tabs { display: flex; align-items: center; gap: 8px; }
   .tabs-arrow { flex: none; color: var(--yellow); font-size: 16px; line-height: 1; }
   .bar {
@@ -438,7 +438,7 @@ async function start() {
     }],
     onRuntimeInitialized() {
       status("");
-      barFillEl.style.width = "100%";
+      barFillEl.hidden = true;
       playBtn.disabled = false;
       if (autoplay) play();
     },
