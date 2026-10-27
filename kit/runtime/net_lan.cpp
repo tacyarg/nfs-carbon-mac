@@ -217,6 +217,33 @@ void complete_post(UdpPost &po, uint32_t src_ip, uint16_t src_port, const uint8_
     po = UdpPost{};
 }
 
+// Hands a datagram to a socket: to its posted receive if it has one, else to its queue.
+void deliver(Udp *u, uint32_t ip, uint16_t port, const uint8_t *p, uint32_t n) {
+    if (u->post.pending) {
+        complete_post(u->post, ip, port, p, n);
+        return;
+    }
+    if (u->q.size() >= UDP_QCAP || u->qbytes + n > UDP_QBYTES_CAP)
+        return; // full: the oldest queued datagram is kept, this one dropped
+    Dgram d;
+    d.ip = ip;
+    d.port = port;
+    d.data.assign(p, p + n);
+    u->qbytes += n;
+    u->q.push_back(std::move(d));
+}
+
+uint16_t inet_checksum(const uint8_t *p, uint32_t n) {
+    uint32_t sum = 0;
+    for (uint32_t i = 0; i + 1 < n; i += 2)
+        sum += (uint32_t)(p[i] << 8 | p[i + 1]);
+    if (n & 1)
+        sum += (uint32_t)p[n - 1] << 8;
+    while (sum >> 16)
+        sum = (sum & 0xffff) + (sum >> 16);
+    return (uint16_t)~sum;
+}
+
 void udp_rx(const net_slot *s) {
     if (s->len < NET_LAN_HDR || s->len > NET_MAX_PAYLOAD || s->data[0] != NET_LAN_UDP_DATA)
         return; // ponytail: broadcast, "port unreachable" and ICMP are not ported (Carbon has no LAN play)
@@ -228,18 +255,7 @@ void udp_rx(const net_slot *s) {
             u = &g_u[h];
     if (!u) // no socket bound to that port: dropped
         return;
-    if (u->post.pending) {
-        complete_post(u->post, s->src_ip, s->src_port, p, n);
-        return;
-    }
-    if (u->q.size() >= UDP_QCAP || u->qbytes + n > UDP_QBYTES_CAP)
-        return; // full: the oldest queued datagram is kept, this one dropped
-    Dgram d;
-    d.ip = s->src_ip;
-    d.port = s->src_port;
-    d.data.assign(p, p + n);
-    u->qbytes += n;
-    u->q.push_back(std::move(d));
+    deliver(u, s->src_ip, s->src_port, p, n);
 }
 
 uint16_t ephemeral() {
@@ -449,6 +465,39 @@ int lan_udp_sendto(int h, uint32_t rip_h, uint16_t rport, const uint8_t *p, int 
     }
     if (!tx_udp(rip_h, u->lport, rport, p, (uint32_t)n))
         return -10055; // WSAENOBUFS: TX ring full or offline
+    return n;
+}
+
+int lan_icmp_echo(int h, uint32_t rip_h, const uint8_t *p, int n) {
+    Udp *u = uget(h);
+    if (!u)
+        return -10038;
+    if (n < 8 || (uint32_t)n > NET_MAX_PAYLOAD - 20)
+        return -10040; // WSAEMSGSIZE
+    if (p[0] != 8 || p[1] != 0)
+        return n; // only an echo request is answered; anything else goes nowhere
+    // ponytail: answered here in 0 ms and never crosses the switch; real round trips if matchmaking ever needs them
+    std::vector<uint8_t> r(20 + (size_t)n, 0);
+    uint32_t total = 20 + (uint32_t)n, me = lan_vip();
+    r[0] = 0x45; // IPv4, a 20-byte header: what a Windows raw socket reads first
+    r[2] = (uint8_t)(total >> 8);
+    r[3] = (uint8_t)total;
+    r[8] = 128; // TTL
+    r[9] = 1;   // ICMP
+    for (int i = 0; i < 4; ++i) {
+        r[12 + i] = (uint8_t)(rip_h >> (24 - 8 * i));
+        r[16 + i] = (uint8_t)(me >> (24 - 8 * i));
+    }
+    uint16_t ck = inet_checksum(r.data(), 20);
+    r[10] = (uint8_t)(ck >> 8);
+    r[11] = (uint8_t)ck;
+    memcpy(r.data() + 20, p, (size_t)n);
+    r[20] = 0; // echo reply
+    r[22] = r[23] = 0;
+    ck = inet_checksum(r.data() + 20, (uint32_t)n);
+    r[22] = (uint8_t)(ck >> 8);
+    r[23] = (uint8_t)ck;
+    deliver(u, rip_h, 0, r.data(), total);
     return n;
 }
 

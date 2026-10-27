@@ -27,11 +27,11 @@ static bool check(bool ok, const char *fmt, ...) {
     return ok;
 }
 
-// Calls WS2_32!name with stdcall arguments, as gdi_tests' call_import does.
-static uint32_t ws(X86 *c, const char *name, const std::vector<uint32_t> &args) {
-    uint32_t tramp = imports_resolve("WS2_32.dll", name);
+// Calls dll!name with stdcall arguments, as gdi_tests' call_import does.
+static uint32_t api(X86 *c, const char *dll, const char *name, const std::vector<uint32_t> &args) {
+    uint32_t tramp = imports_resolve(dll, name);
     if (!tramp) {
-        check(false, "no trampoline for WS2_32!%s", name);
+        check(false, "no trampoline for %s!%s", dll, name);
         return 0;
     }
     uint32_t before = c->r[R_ESP], esp = before;
@@ -43,9 +43,12 @@ static uint32_t ws(X86 *c, const char *name, const std::vector<uint32_t> &args) 
     wr32(esp, 0);
     c->r[R_ESP] = esp;
     imports_dispatch(c, tramp);
-    check(c->r[R_ESP] == before, "WS2_32!%s pops its %zu arguments", name, args.size());
+    check(c->r[R_ESP] == before, "%s!%s pops its %zu arguments", dll, name, args.size());
     c->r[R_ESP] = before;
     return c->r[R_EAX];
+}
+static uint32_t ws(X86 *c, const char *name, const std::vector<uint32_t> &args) {
+    return api(c, "WS2_32.dll", name, args);
 }
 
 static const uint32_t SCRATCH = 0x00300000; // guest bytes the tests may use
@@ -300,12 +303,62 @@ static void test_connect_refused_shows_in_select() {
     ws(&c, "closesocket", {s});
 }
 
-static void test_raw_socket_refused() {
+static uint16_t inet_sum(const uint8_t *p, int n) {
+    uint32_t sum = 0;
+    for (int i = 0; i + 1 < n; i += 2)
+        sum += (uint32_t)(p[i] << 8 | p[i + 1]);
+    if (n & 1)
+        sum += (uint32_t)p[n - 1] << 8;
+    while (sum >> 16)
+        sum = (sum & 0xffff) + (sum >> 16);
+    return (uint16_t)~sum;
+}
+static uint32_t be32(const uint8_t *p) { return (uint32_t)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
+
+// Carbon pings its ping sites (DirtySock's ProtoPing, a raw ICMP socket) only when the player is an administrator,
+// and matchmaking waits for those pings: the kit plays an administrator and answers the echo itself.
+static void test_admin_and_icmp_echo() {
     X86 c;
     loader_init_context(&c);
     page_online(ME);
-    check(ws(&c, "socket", {2, 3, 1}) == INVALID_SOCKET_ && ws(&c, "WSAGetLastError", {}) == 10013,
-          "a raw socket is WSAEACCES, as for a Windows user without admin rights");
+    memset(g_mem + SCRATCH + 0x10, 0, 6);
+    wr8(SCRATCH + 0x15, 5); // SECURITY_NT_AUTHORITY
+    wr32(SCRATCH + 0x20, 0);
+    check(api(&c, "ADVAPI32.dll", "AllocateAndInitializeSid", {SCRATCH + 0x10, 2, 0x20, 0x220, 0, 0, 0, 0, 0, 0, SCRATCH + 0x20}) == 1 &&
+              rd32(SCRATCH + 0x20) != 0,
+          "the administrators SID is made");
+    wr32(SCRATCH + 0x24, 0);
+    check(api(&c, "ADVAPI32.dll", "CheckTokenMembership", {0, rd32(SCRATCH + 0x20), SCRATCH + 0x24}) == 1 &&
+              rd32(SCRATCH + 0x24) == 1,
+          "and the player is a member: an administrator");
+    check(ws(&c, "socket", {2, 3, 6}) == INVALID_SOCKET_ && ws(&c, "WSAGetLastError", {}) == 10013,
+          "a raw socket for anything but ICMP is still WSAEACCES");
+    uint32_t s = ws(&c, "socket", {2, 3, 1});
+    check(s != INVALID_SOCKET_, "a raw ICMP socket opens");
+    uint8_t req[16] = {8, 0, 0, 0, 0x12, 0x34, 0, 1, 'p', 'i', 'n', 'g', 'p', 'o', 'n', 'g'};
+    uint16_t ck = inet_sum(req, 16);
+    req[2] = (uint8_t)(ck >> 8);
+    req[3] = (uint8_t)ck;
+    memcpy(g_mem + SCRATCH + 0x200, req, 16);
+    check(ws(&c, "sendto", {s, SCRATCH + 0x200, 16, 0, server_addr(SCRATCH + 0x30, 0), 16}) == 16,
+          "an echo request to the server is sent");
+    wr32(SCRATCH + 0x40, 0);
+    wr32(SCRATCH + 0x44, 0);
+    check(ws(&c, "select", {0, fdset(SCRATCH + 0x100, s), 0, 0, SCRATCH + 0x40}) == 1, "its reply is readable at once");
+    wr32(SCRATCH + 0x60, 16);
+    uint32_t n = ws(&c, "recvfrom", {s, SCRATCH + 0x400, 256, 0, SCRATCH + 0x50, SCRATCH + 0x60});
+    const uint8_t *r = g_mem + SCRATCH + 0x400;
+    check(n == 36 && r[0] == 0x45 && r[9] == 1 && inet_sum(r, 20) == 0 && be32(r + 12) == SERVER && be32(r + 16) == ME,
+          "the reply starts with its IP header, as a Windows raw socket reads it (from the server, to us)");
+    check(r[20] == 0 && r[21] == 0 && memcmp(r + 24, req + 4, 12) == 0 && inet_sum(r + 20, 16) == 0,
+          "and is an echo reply with the same id, sequence and data, and a valid checksum");
+    check(be32(g_mem + SCRATCH + 0x54) == SERVER, "from the address pinged");
+    req[0] = 13; // a timestamp request
+    memcpy(g_mem + SCRATCH + 0x200, req, 16);
+    ws(&c, "sendto", {s, SCRATCH + 0x200, 16, 0, server_addr(SCRATCH + 0x30, 0), 16});
+    check(ws(&c, "select", {0, fdset(SCRATCH + 0x100, s), 0, 0, SCRATCH + 0x40}) == 0,
+          "anything but an echo request gets no answer");
+    ws(&c, "closesocket", {s});
 }
 
 static void test_events_and_pending_overlapped() {
@@ -584,7 +637,7 @@ int main() {
     test_gethostbyname_rule();
     test_tcp_via_winsock();
     test_connect_refused_shows_in_select();
-    test_raw_socket_refused();
+    test_admin_and_icmp_echo();
     test_events_and_pending_overlapped();
     test_udp_bind_and_getsockname();
     test_udp_sendto_builds_frame();

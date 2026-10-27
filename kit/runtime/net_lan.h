@@ -30,6 +30,9 @@ int lan_udp_sendto(int h, uint32_t rip_h, uint16_t rport, const uint8_t *p, int 
 // One datagram, truncated to n bytes (then WSAEMSGSIZE, the rest discarded).
 // Empty queue: WSAEWOULDBLOCK. *from_ip_h/*from_port are the sender's address.
 int lan_udp_recvfrom(int h, uint8_t *p, int n, uint32_t *from_ip_h, uint16_t *from_port);
+// A raw ICMP socket rides on a UDP handle: an echo request to rip_h is answered at once with an echo reply
+// (IP header first, as Windows delivers it) queued on h. Returns n, or a negative WSA code.
+int lan_icmp_echo(int h, uint32_t rip_h, const uint8_t *p, int n);
 bool lan_udp_ready(int h);
 void lan_udp_close(int h);
 // A queued datagram completes it at once (handled by the caller via

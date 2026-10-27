@@ -102,7 +102,8 @@ void w_inet_ntoa(X86 *c) {
 // bind, send or receive before the game ever calls connect).
 struct Sock {
     bool used = false;
-    int type = 0;  // 1 stream, 2 datagram
+    int type = 0;  // 1 stream, 2 datagram (a raw ICMP socket is a datagram one with icmp set)
+    bool icmp = false;
     bool nb = false;
     int h = 0;     // lan_tcp_* (TCP) or lan_udp_* (UDP) handle
 };
@@ -148,8 +149,11 @@ void w_socket(X86 *c) {
     uint32_t type = arg(c, 1);
     if (!lan_online())
         return fail(c, WSAENETDOWN, INVALID_SOCKET_);
-    if (type == 3)
+    bool icmp = type == 3 && arg(c, 2) == 1; // SOCK_RAW + IPPROTO_ICMP: ProtoPing's echo, answered by the kit
+    if (type == 3 && !icmp)
         return fail(c, WSAEACCES, INVALID_SOCKET_);
+    if (icmp)
+        type = 2;
     if (type != 1 && type != 2)
         return fail(c, WSAESOCKTNOSUPPORT, INVALID_SOCKET_);
     for (int i = 0; i < NSOCK; ++i)
@@ -157,6 +161,7 @@ void w_socket(X86 *c) {
             g_socks[i] = Sock{};
             g_socks[i].used = true;
             g_socks[i].type = (int)type;
+            g_socks[i].icmp = icmp;
             if (type == 2)
                 g_socks[i].h = lan_udp_open(); // negative on failure: every later call then fails WSAENOTSOCK-like
             set_eax(c, SOCK_BASE + (uint32_t)i);
@@ -313,7 +318,8 @@ void w_sendto(X86 *c) {
         log_once("udp-send-outside", "winsock: UDP sendto outside 10.77.0.0/16 is dropped (not ported)");
         return set_eax(c, len);
     }
-    int n = lan_udp_sendto(k->h, ip_h, port_h, g_mem + buf, (int)len);
+    int n = k->icmp ? lan_icmp_echo(k->h, ip_h, g_mem + buf, (int)len)
+                    : lan_udp_sendto(k->h, ip_h, port_h, g_mem + buf, (int)len);
     if (n < 0)
         return fail(c, (uint32_t)-n, SOCKET_ERROR_);
     set_eax(c, (uint32_t)n);
@@ -324,7 +330,7 @@ void w_bind(X86 *c) {
     uint32_t sa = arg(c, 1);
     if (!k)
         return fail(c, WSAENOTSOCK, SOCKET_ERROR_);
-    if (k->type == 2) {
+    if (k->type == 2 && !k->icmp) {
         uint16_t port_h = sa && gm_valid(sa, 4) ? bswap16(rd16(sa + 2)) : 0;
         int e = lan_udp_bind(k->h, port_h);
         if (e < 0)

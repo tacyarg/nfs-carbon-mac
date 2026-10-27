@@ -1117,17 +1117,21 @@ void fill_random(uint32_t p, uint32_t n) {
         wr8(p + i, (uint8_t)state);
     }
 }
+// The player is an administrator: Carbon asks (its only use of these two, 0x81c630) to decide whether to ping its
+// ping sites over a raw ICMP socket, and matchmaking waits for those pings (the kit answers them, net_lan.cpp).
 void a_AllocateAndInitializeSid(X86 *c) {
     uint32_t out = arg(c, 10);
-    if (out && gm_valid(out, 4))
-        wr32(out, 0);
-    set_last_error(5); // ERROR_ACCESS_DENIED: no SIDs here
-    set_eax(c, 0);
+    if (!out || !gm_valid(out, 4)) {
+        set_last_error(87); // ERROR_INVALID_PARAMETER
+        return set_eax(c, 0);
+    }
+    wr32(out, 0x51d00001u); // ponytail: an opaque SID handle, never read; a real SID if a game ever reads one
+    set_eax(c, 1);
 }
 void a_CheckTokenMembership(X86 *c) {
     uint32_t member = arg(c, 2);
     if (member && gm_valid(member, 4))
-        wr32(member, 0); // not an administrator
+        wr32(member, 1);
     set_eax(c, 1);
 }
 void a_CryptAcquireContextA(X86 *c) {
