@@ -564,8 +564,22 @@ class WebGpuRenderer final : public D9Backend {
             b.used = 0;
             return;
         }
-        if (b.used == serial_ && encoder_)
-            submit(); // draws already recorded read the old contents
+        if (b.used == serial_ && encoder_) {
+            // Draws already recorded read the old contents. A small buffer gets a new GPU buffer with
+            // the whole shadow instead of a submit: the recorded commands keep the old one alive, and
+            // the pass goes on. Carbon rewrites one 23 KB buffer ~5 times a frame: 6 submits became 1.
+            // ponytail: a buffer over 1 MB still submits; pool the renamed buffers if that ever shows.
+            if (need <= (1u << 20) && !recomp_ab::old(recomp_ab::RENAME)) {
+                wgpuBufferRelease(b.buffer);
+                forget_buffers();
+                b.buffer = make_buffer(std::max<uint64_t>(need, 4),
+                                       WGPUBufferUsage_Vertex | WGPUBufferUsage_Index);
+                write_padded(b.buffer, 0, b.shadow.data(), b.shadow.size());
+                b.used = 0;
+                return;
+            }
+            submit();
+        }
         write_padded(b.buffer, offset, bytes, size);
     }
     void buffer_drop(uint32_t id) override {

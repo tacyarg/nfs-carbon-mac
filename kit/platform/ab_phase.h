@@ -49,7 +49,8 @@ enum : uint32_t {
     RING = 1024u,   // WebGPU ring data: a writeBuffer per draw before, one per chunk at submit now (d3d9_webgpu.cpp)
     GROUPS = 2048u, // WebGPU bind groups: dropped at every submit before, when a texture retires now (d3d9_webgpu.cpp)
     TSC = 4096u,    // RDTSC: a clock read on every one before, on every 64th now (cpu.cpp recomp_rdtsc)
-    PARAMS = 8192u  // shared effect parameters: sent to the pool on every set before, on change now (d3dx9.cpp)
+    PARAMS = 8192u, // shared effect parameters: sent to the pool on every set before, on change now (d3dx9.cpp)
+    RENAME = 16384u // WebGPU: a buffer rewritten after a draw used it submitted before, gets a new buffer now
 };
 inline uint32_t switches() {
     static const uint32_t m = [] {
@@ -85,6 +86,8 @@ inline uint32_t switches() {
             bits |= TSC;
         if (strstr(e, "params"))
             bits |= PARAMS;
+        if (strstr(e, "rename"))
+            bits |= RENAME;
         return bits;
     }();
     return m;
