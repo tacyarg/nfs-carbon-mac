@@ -166,6 +166,17 @@
   }
   .hint-pill span { font-size: 13px; color: var(--text); }
   .hint { font-size: 12px; color: var(--muted); flex-basis: 100%; margin: 0; }
+  .changes { flex-basis: 100%; font-size: 12px; color: var(--muted); position: relative; }
+  .changes summary { cursor: pointer; width: max-content; }
+  .changes summary b { color: var(--yellow); font-weight: 600; letter-spacing: 0.5px; }
+  .changes > div {
+    position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 2; width: min(560px, 90vw); max-height: 60vh;
+    overflow: auto; padding: 4px 16px 12px; border: 1px solid var(--panel-edge); border-radius: 6px;
+    background: rgba(8, 16, 18, 0.96);
+  }
+  .changes h3 { margin: 10px 0 2px; font: 600 12px/1.4 var(--font-ui); color: var(--text); letter-spacing: 0.5px; text-transform: uppercase; }
+  .changes ul { margin: 0; padding-left: 16px; }
+  .changes li { margin: 2px 0; }
 
   :focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
   :focus:not(:focus-visible) { outline: none; }
@@ -243,11 +254,40 @@
       <div class="hint-pill"><kbd>Enter</kbd><span>Select</span></div>
       <div class="hint-pill"><kbd>Esc</kbd><span>Back, pause</span></div>
       <p class="hint">Change keys in the game's Options, Controls.</p>
+      <!-- Each release: the new version in <summary> and its entry on top, written for players. -->
+      <details class="changes">
+        <summary><b>v0.4.1</b> &middot; What's new</summary>
+        <div>
+          <h3>v0.4.1 &middot; Oct 27</h3>
+          <ul><li>The version and this list on the start page.</li></ul>
+          <h3>v0.4.0 &middot; Oct 27</h3>
+          <ul>
+            <li>Plays in Firefox.</li>
+            <li>The download is 13 MB instead of 107 MB, and the game uses 1.2 GB of memory instead of 3.1 GB.</li>
+            <li>New players go straight in: your online name becomes your alias, with autosave on.</li>
+            <li>The frame-rate overlay is off.</li>
+          </ul>
+          <h3>v0.3.0 &middot; Oct 26</h3>
+          <ul><li>Faster loading: about 5 seconds to the title screen on a first visit, down from 38.</li></ul>
+          <h3>v0.2.0 &middot; Oct 26</h3>
+          <ul>
+            <li>Online in one step: no account and no EA sign-in. Your key owns your name.</li>
+            <li>Cloud saves: your career follows your key to any browser.</li>
+          </ul>
+          <h3>v0.1.0 &middot; Oct 26</h3>
+          <ul>
+            <li>Need for Speed Carbon in the browser, streamed from our server. Nothing to install.</li>
+            <li>Signs in online to our own server.</li>
+          </ul>
+        </div>
+      </details>
     </footer>
   </div>
 </div>
 <script>
 "use strict";
+// The What's new list closes on a click anywhere else, as a menu would.
+document.addEventListener("click", (e) => { const c = document.querySelector(".changes"); if (c.open && !c.contains(e.target)) c.open = false; });
 const canvas = document.getElementById("canvas");
 const landing = document.getElementById("landing");
 const lineEl = document.getElementById("line");
