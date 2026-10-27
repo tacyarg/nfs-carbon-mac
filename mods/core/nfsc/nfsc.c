@@ -125,6 +125,7 @@ static void log_line(const char *text) {
 #include "online.h" /* hide Quick Match / Custom Match */
 #include "rumble.h" /* controller rumble from the game's force-feedback values */
 #include "cheats.h" /* infinite nitrous and speedbreaker */
+#include "mix.h" /* the sound mixer's inner loops, natively */
 
 /* ---- the resolution list --------------------------------------------------
  * The host scales the frame smoothly to the window, aspect kept (game.toml
@@ -513,6 +514,7 @@ PopModStatus pop_mod_init(const PopModApi *api) {
     online_install();
     rumble_install();
     cheats_install();
+    mix_install();
     PopModStatus s = install(SETUP_PROJECTION, setup_projection, POP_HOOK_BEFORE, 0);
     if (s != POP_OK)
         return s;
