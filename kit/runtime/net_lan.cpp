@@ -14,7 +14,10 @@
 // 2026 Talha Müderrisoğlu. MIT License.
 #include "net_lan.h"
 #include "../platform/os.h"
+#include "memory.h"
+#include "win32.h"
 #include <cstring>
+#include <deque>
 #include <vector>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -35,6 +38,33 @@ const uint32_t RX_CAP = 65536;  // unread bytes per connection before it is rese
 const uint64_t CONNECT_MS = 3000;
 const uint32_t TX_RESERVE = 4;  // TX slots data never takes, so a FIN still fits
 Conn g_c[NCONN + 1];            // handle 0 is never used
+
+// A received datagram, queued until the socket's recvfrom/WSARecvFrom takes it.
+struct Dgram {
+    uint32_t ip = 0;
+    uint16_t port = 0;
+    std::vector<uint8_t> data;
+};
+// A posted overlapped receive (WSARecvFrom with an OVERLAPPED and nothing
+// queued yet): the guest addresses lan_pump writes into when a datagram
+// arrives. from_addr/fromlen_addr are 0 for WSARecv (no sender address).
+struct UdpPost {
+    bool pending = false;
+    uint32_t buf_addr = 0, buflen = 0, from_addr = 0, fromlen_addr = 0, ov_addr = 0, event = 0;
+};
+struct Udp {
+    bool used = false;
+    bool bound = false;
+    uint16_t lport = 0;
+    std::deque<Dgram> q;
+    uint32_t qbytes = 0;
+    UdpPost post;
+};
+const int NUDP = 64;
+const uint32_t UDP_QCAP = 64;         // datagrams queued per socket before the newest is dropped
+const uint32_t UDP_QBYTES_CAP = 65536; // bytes queued per socket, same cap
+Udp g_u[NUDP + 1];                     // handle 0 is never used
+
 alignas(16) uint8_t g_box[NET_MAILBOX_BYTES];
 net_mailbox *MB;
 uint32_t g_gen, g_port = 49152, g_rand;
@@ -47,6 +77,9 @@ net_slot *slot(uint32_t off, uint32_t slots, uint32_t i) {
 }
 Conn *get(int h) { return h >= 1 && h <= NCONN && g_c[h].state != LAN_FREE ? &g_c[h] : nullptr; }
 bool live(const Conn &k) { return k.state == LAN_SYN_SENT || k.state == LAN_EST; }
+Udp *uget(int h) { return h >= 1 && h <= NUDP && g_u[h].used ? &g_u[h] : nullptr; }
+uint32_t ubswap32(uint32_t v) { return __builtin_bswap32(v); }
+uint16_t ubswap16(uint16_t v) { return (uint16_t)((v >> 8) | (v << 8)); }
 
 bool tx(uint32_t rip, uint16_t lport, uint16_t rport, uint32_t cid, uint8_t op, const uint8_t *p, uint32_t n) {
     if (!lan_online())
@@ -77,6 +110,32 @@ bool tx(uint32_t rip, uint16_t lport, uint16_t rport, uint32_t cid, uint8_t op, 
 }
 bool tx(const Conn &k, uint8_t op, const uint8_t *p = nullptr, uint32_t n = 0) {
     return tx(k.rip, k.lport, k.rport, k.cid, op, p, n);
+}
+bool tx_udp(uint32_t rip, uint16_t lport, uint16_t rport, const uint8_t *p, uint32_t n) {
+    if (!lan_online())
+        return false;
+    uint32_t h = MB->tx_head;
+    if (h - ld(&MB->tx_tail) >= NET_TX_SLOTS)
+        return false;
+    net_slot *s = slot(MB->tx_off, NET_TX_SLOTS, h);
+    s->len = NET_LAN_HDR + n;
+    s->kind = NET_KIND_LAN_UDP;
+    s->src_ip = ld(&MB->vip);
+    s->dst_ip = rip;
+    s->src_port = lport;
+    s->dst_port = rport;
+    s->t_ms = 0;
+    memset(s->data, 0, NET_LAN_HDR);
+    s->data[0] = NET_LAN_UDP_DATA;
+    s->data[1] = 64;
+    if (n)
+        memcpy(s->data + NET_LAN_HDR, p, n);
+    st(&MB->tx_head, h + 1);
+    __atomic_add_fetch(&MB->tx_bell, 1, __ATOMIC_SEQ_CST);
+#ifdef __EMSCRIPTEN__
+    __builtin_wasm_memory_atomic_notify((int *)&MB->tx_bell, 1);
+#endif
+    return true;
 }
 
 void reset_all() {
@@ -135,6 +194,54 @@ void rx(const net_slot *s) {
     }
 }
 
+// Writes a completed overlapped receive into guest memory and signals its
+// event, the same way WSASetEvent does (win32_signal_event). Called from the
+// pump the instant a datagram arrives for a socket with one posted.
+void complete_post(UdpPost &po, uint32_t src_ip, uint16_t src_port, const uint8_t *p, uint32_t n) {
+    uint32_t m = n < po.buflen ? n : po.buflen; // ponytail: truncation beyond this is not surfaced as an
+    if (po.buf_addr && m && gm_valid(po.buf_addr, m))      // error on the overlapped path (not exercised by Carbon)
+        memcpy(g_mem + po.buf_addr, p, m);
+    if (po.from_addr && po.fromlen_addr && gm_valid(po.from_addr, 16)) {
+        memset(g_mem + po.from_addr, 0, 16);
+        wr16(po.from_addr, 2); // AF_INET
+        wr16(po.from_addr + 2, ubswap16(src_port));
+        wr32(po.from_addr + 4, ubswap32(src_ip));
+        wr32(po.fromlen_addr, 16);
+    }
+    if (po.ov_addr && gm_valid(po.ov_addr, 20)) {
+        wr32(po.ov_addr + 0, 0); // OVERLAPPED.Internal
+        wr32(po.ov_addr + 4, m); // OVERLAPPED.InternalHigh
+    }
+    if (po.event)
+        win32_signal_event(po.event, false);
+    po = UdpPost{};
+}
+
+void udp_rx(const net_slot *s) {
+    if (s->len < NET_LAN_HDR || s->len > NET_MAX_PAYLOAD || s->data[0] != NET_LAN_UDP_DATA)
+        return; // ponytail: broadcast, "port unreachable" and ICMP are not ported (Carbon has no LAN play)
+    const uint8_t *p = s->data + NET_LAN_HDR;
+    uint32_t n = s->len - NET_LAN_HDR;
+    Udp *u = nullptr;
+    for (int h = 1; h <= NUDP && !u; ++h)
+        if (g_u[h].used && g_u[h].bound && g_u[h].lport == s->dst_port)
+            u = &g_u[h];
+    if (!u) // no socket bound to that port: dropped
+        return;
+    if (u->post.pending) {
+        complete_post(u->post, s->src_ip, s->src_port, p, n);
+        return;
+    }
+    if (u->q.size() >= UDP_QCAP || u->qbytes + n > UDP_QBYTES_CAP)
+        return; // full: the oldest queued datagram is kept, this one dropped
+    Dgram d;
+    d.ip = s->src_ip;
+    d.port = s->src_port;
+    d.data.assign(p, p + n);
+    u->qbytes += n;
+    u->q.push_back(std::move(d));
+}
+
 uint16_t ephemeral() {
     for (;;) {
         uint16_t p = (uint16_t)g_port;
@@ -142,6 +249,8 @@ uint16_t ephemeral() {
         bool used = false;
         for (int h = 1; h <= NCONN; ++h)
             used |= g_c[h].state != LAN_FREE && g_c[h].lport == p;
+        for (int h = 1; h <= NUDP && !used; ++h)
+            used |= g_u[h].used && g_u[h].bound && g_u[h].lport == p;
         if (!used)
             return p;
     }
@@ -193,8 +302,13 @@ void lan_pump() {
         g_gen = gen;
     }
     if (lan_online())
-        for (uint32_t t = MB->rx_tail; t != ld(&MB->rx_head); st(&MB->rx_tail, ++t))
-            rx(slot(MB->rx_off, NET_RX_SLOTS, t));
+        for (uint32_t t = MB->rx_tail; t != ld(&MB->rx_head); st(&MB->rx_tail, ++t)) {
+            const net_slot *s = slot(MB->rx_off, NET_RX_SLOTS, t);
+            if (s->kind == NET_KIND_LAN_UDP)
+                udp_rx(s);
+            else
+                rx(s); // rx() checks the kind itself; other kinds (ICMP) are not ported
+        }
     uint64_t now = now_ms();
     for (int h = 1; h <= NCONN; ++h)
         if (g_c[h].state == LAN_SYN_SENT && now >= g_c[h].deadline_ms)
@@ -288,4 +402,90 @@ void lan_tcp_close(int h) {
     if (k->state == LAN_EST)
         tx(*k, NET_LAN_TCP_FIN);
     *k = Conn{};
+}
+
+int lan_udp_open() {
+    for (int h = 1; h <= NUDP; ++h)
+        if (!g_u[h].used) {
+            g_u[h] = Udp{};
+            g_u[h].used = true;
+            return h;
+        }
+    return -10024; // WSAEMFILE
+}
+
+int lan_udp_bind(int h, uint16_t port_h) {
+    Udp *u = uget(h);
+    if (!u)
+        return -10038; // WSAENOTSOCK
+    if (u->bound)
+        return -10022; // WSAEINVAL: already bound (not exercised by Carbon)
+    if (port_h == 0) {
+        u->lport = ephemeral();
+    } else {
+        for (int i = 1; i <= NUDP; ++i)
+            if (i != h && g_u[i].used && g_u[i].bound && g_u[i].lport == port_h)
+                return -10048; // WSAEADDRINUSE
+        u->lport = port_h;
+    }
+    u->bound = true;
+    return 0;
+}
+
+uint16_t lan_udp_lport(int h) {
+    Udp *u = uget(h);
+    return u ? u->lport : 0;
+}
+
+int lan_udp_sendto(int h, uint32_t rip_h, uint16_t rport, const uint8_t *p, int n) {
+    Udp *u = uget(h);
+    if (!u)
+        return -10038;
+    if ((uint32_t)n > NET_MAX_PAYLOAD - NET_LAN_HDR)
+        return -10040; // WSAEMSGSIZE, nothing sent
+    if (!u->bound) {
+        u->lport = ephemeral();
+        u->bound = true;
+    }
+    if (!tx_udp(rip_h, u->lport, rport, p, (uint32_t)n))
+        return -10055; // WSAENOBUFS: TX ring full or offline
+    return n;
+}
+
+int lan_udp_recvfrom(int h, uint8_t *p, int n, uint32_t *from_ip_h, uint16_t *from_port) {
+    Udp *u = uget(h);
+    if (!u)
+        return -10038;
+    if (u->q.empty())
+        return -10035; // WSAEWOULDBLOCK
+    Dgram d = std::move(u->q.front());
+    u->qbytes -= (uint32_t)d.data.size();
+    u->q.pop_front();
+    uint32_t m = (uint32_t)d.data.size() < (uint32_t)n ? (uint32_t)d.data.size() : (uint32_t)n;
+    if (m)
+        memcpy(p, d.data.data(), m);
+    if (from_ip_h)
+        *from_ip_h = d.ip;
+    if (from_port)
+        *from_port = d.port;
+    return (uint32_t)d.data.size() > m ? -10040 /* WSAEMSGSIZE, truncated */ : (int)m;
+}
+
+bool lan_udp_ready(int h) {
+    Udp *u = uget(h);
+    return u && !u->q.empty();
+}
+
+void lan_udp_close(int h) {
+    Udp *u = uget(h);
+    if (u)
+        *u = Udp{};
+}
+
+void lan_udp_post_recv(int h, uint32_t buf_addr, uint32_t buflen, uint32_t from_addr, uint32_t fromlen_addr,
+                       uint32_t ov_addr, uint32_t event_handle) {
+    Udp *u = uget(h);
+    if (!u)
+        return;
+    u->post = UdpPost{true, buf_addr, buflen, from_addr, fromlen_addr, ov_addr, event_handle};
 }

@@ -38,6 +38,7 @@ enum : uint32_t {
     WSAHOST_NOT_FOUND = 11001,
     WSA_IO_INCOMPLETE = 996,
     WSA_IO_PENDING = 997,
+    STATUS_PENDING_ = 0x103, // OVERLAPPED.Internal while a posted receive hasn't completed yet
     INVALID_SOCKET_ = 0xffffffffu,
     SOCKET_ERROR_ = 0xffffffffu,
 };
@@ -96,13 +97,14 @@ void w_inet_ntoa(X86 *c) {
     set_eax(c, buf);
 }
 
-// One guest SOCKET. TCP sockets map to a lan_* handle once they connect.
+// One guest SOCKET. TCP sockets map to a lan_tcp_* handle once they connect;
+// a UDP socket gets its lan_udp_* handle at socket() time (it needs one to
+// bind, send or receive before the game ever calls connect).
 struct Sock {
     bool used = false;
     int type = 0;  // 1 stream, 2 datagram
     bool nb = false;
-    int h = 0;     // lan_* handle (TCP, after connect)
-    uint32_t lport_n = 0; // UDP: the port bind() named, network order
+    int h = 0;     // lan_tcp_* (TCP) or lan_udp_* (UDP) handle
 };
 const uint32_t SOCK_BASE = 0x100; // SOCKET n is SOCK_BASE + index: never 0, never INVALID_SOCKET
 const int NSOCK = 64;
@@ -119,7 +121,10 @@ void pump_wait(uint32_t ms) {
     lan_pump();
     guest_sleep_ms(ms);
 }
+void put_addr(uint32_t sa, uint32_t plen, uint32_t ip_h, uint16_t port); // defined below, used by recvfrom too
 uint32_t conn_error(const Sock &k) {
+    if (k.type != 1)
+        return 0;
     switch (lan_tcp_state(k.h)) {
     case LAN_REFUSED: return WSAECONNREFUSED;
     case LAN_TIMEDOUT: return WSAETIMEDOUT;
@@ -152,6 +157,8 @@ void w_socket(X86 *c) {
             g_socks[i] = Sock{};
             g_socks[i].used = true;
             g_socks[i].type = (int)type;
+            if (type == 2)
+                g_socks[i].h = lan_udp_open(); // negative on failure: every later call then fails WSAENOTSOCK-like
             set_eax(c, SOCK_BASE + (uint32_t)i);
             return;
         }
@@ -162,8 +169,12 @@ void w_closesocket(X86 *c) {
     Sock *k = sock_of(arg(c, 0));
     if (!k)
         return fail(c, WSAENOTSOCK, SOCKET_ERROR_);
-    if (k->h)
-        lan_tcp_close(k->h);
+    if (k->h > 0) {
+        if (k->type == 2)
+            lan_udp_close(k->h);
+        else
+            lan_tcp_close(k->h);
+    }
     *k = Sock{};
     set_eax(c, 0);
 }
@@ -220,6 +231,10 @@ void w_send(X86 *c) {
     uint32_t buf = arg(c, 1), len = arg(c, 2);
     if (!k)
         return fail(c, WSAENOTSOCK, SOCKET_ERROR_);
+    if (k->type == 2) {
+        log_once("udp-send-noconn", "winsock: send on an unconnected UDP socket is not modelled yet (M2)");
+        return fail(c, WSAENOTCONN, SOCKET_ERROR_);
+    }
     if (!k->h)
         return fail(c, WSAENOTCONN, SOCKET_ERROR_);
     if (!gm_valid(buf, len))
@@ -255,15 +270,31 @@ void w_recv(X86 *c) {
     set_eax(c, (uint32_t)n);
 }
 
-// recvfrom/sendto: TCP behaves as recv/send; UDP is the M1 stub.
+// recvfrom/sendto: TCP behaves as recv/send; UDP goes over the virtual LAN.
 void w_recvfrom(X86 *c) {
     Sock *k = sock_of(arg(c, 0));
     if (k && k->type == 1)
         return w_recv(c);
     if (!k)
         return fail(c, WSAENOTSOCK, SOCKET_ERROR_);
-    log_once("udp-recv", "winsock: UDP receive is not modelled yet (M2)");
-    fail(c, WSAEWOULDBLOCK, SOCKET_ERROR_);
+    uint32_t buf = arg(c, 1), len = arg(c, 2), from = arg(c, 4), fromlen_p = arg(c, 5);
+    if (!gm_valid(buf, len))
+        return fail(c, 10014, SOCKET_ERROR_);
+    for (;;) {
+        lan_pump();
+        uint32_t fip; uint16_t fport;
+        int n = lan_udp_recvfrom(k->h, g_mem + buf, (int)len, &fip, &fport);
+        if (n != -(int)WSAEWOULDBLOCK) {
+            if (from)
+                put_addr(from, fromlen_p, fip, fport);
+            if (n < 0)
+                return fail(c, (uint32_t)-n, SOCKET_ERROR_);
+            return set_eax(c, (uint32_t)n);
+        }
+        if (k->nb)
+            return fail(c, WSAEWOULDBLOCK, SOCKET_ERROR_);
+        pump_wait(5);
+    }
 }
 void w_sendto(X86 *c) {
     Sock *k = sock_of(arg(c, 0));
@@ -271,8 +302,21 @@ void w_sendto(X86 *c) {
         return w_send(c);
     if (!k)
         return fail(c, WSAENOTSOCK, SOCKET_ERROR_);
-    log_once("udp-send", "winsock: UDP send dropped, not modelled yet (M2)");
-    set_eax(c, arg(c, 2)); // ponytail: reported sent, as a datagram into the void would be
+    uint32_t buf = arg(c, 1), len = arg(c, 2), to = arg(c, 4), tolen = arg(c, 5);
+    if (!gm_valid(buf, len))
+        return fail(c, 10014, SOCKET_ERROR_);
+    if (!to || tolen < 16 || !gm_valid(to, 16))
+        return fail(c, 10014, SOCKET_ERROR_);
+    uint32_t ip_h = bswap32(rd32(to + 4));
+    uint16_t port_h = bswap16(rd16(to + 2));
+    if ((ip_h & 0xffff0000u) != 0x0A4D0000u) { // not 10.77.x.x: the design's "dropped as sent"
+        log_once("udp-send-outside", "winsock: UDP sendto outside 10.77.0.0/16 is dropped (not ported)");
+        return set_eax(c, len);
+    }
+    int n = lan_udp_sendto(k->h, ip_h, port_h, g_mem + buf, (int)len);
+    if (n < 0)
+        return fail(c, (uint32_t)-n, SOCKET_ERROR_);
+    set_eax(c, (uint32_t)n);
 }
 
 void w_bind(X86 *c) {
@@ -280,9 +324,13 @@ void w_bind(X86 *c) {
     uint32_t sa = arg(c, 1);
     if (!k)
         return fail(c, WSAENOTSOCK, SOCKET_ERROR_);
-    if (sa && gm_valid(sa, 4))
-        k->lport_n = rd16(sa + 2);
-    set_eax(c, 0); // TCP picks its own port at connect; UDP is the M1 stub
+    if (k->type == 2) {
+        uint16_t port_h = sa && gm_valid(sa, 4) ? bswap16(rd16(sa + 2)) : 0;
+        int e = lan_udp_bind(k->h, port_h);
+        if (e < 0)
+            return fail(c, (uint32_t)-e, SOCKET_ERROR_);
+    }
+    set_eax(c, 0); // TCP picks its own port at connect
 }
 void w_listen_accept(X86 *c) {
     log_once("listen", "winsock: listen/accept are not modelled yet (M2)");
@@ -320,14 +368,15 @@ void w_getsockname(X86 *c) {
     Sock *k = sock_of(arg(c, 0));
     if (!k)
         return fail(c, WSAENOTSOCK, SOCKET_ERROR_);
-    put_addr(arg(c, 1), arg(c, 2), lan_vip(), k->h ? lan_tcp_lport(k->h) : bswap16((uint16_t)k->lport_n));
+    uint16_t port = k->type == 2 ? lan_udp_lport(k->h) : (k->h ? lan_tcp_lport(k->h) : 0);
+    put_addr(arg(c, 1), arg(c, 2), lan_vip(), port);
     set_eax(c, 0);
 }
 void w_getpeername(X86 *c) {
     Sock *k = sock_of(arg(c, 0));
     if (!k)
         return fail(c, WSAENOTSOCK, SOCKET_ERROR_);
-    if (!k->h || lan_tcp_state(k->h) != LAN_EST)
+    if (k->type != 1 || !k->h || lan_tcp_state(k->h) != LAN_EST)
         return fail(c, WSAENOTCONN, SOCKET_ERROR_);
     // Only the server is reachable in M1, so the peer is the address connect() named.
     uint32_t sa = arg(c, 1), plen = arg(c, 2);
@@ -345,8 +394,8 @@ bool ready(uint32_t s, int which) {
     Sock *k = sock_of(s);
     if (!k)
         return false;
-    if (k->type == 2)
-        return which == 1; // UDP: always writable, never readable (M1 stub)
+    if (k->type == 2) // UDP: writable whenever asked, readable when its queue is not empty, never excepted
+        return which == 0 ? lan_udp_ready(k->h) : which == 1;
     if (!k->h)
         return false;
     int st = lan_tcp_state(k->h);
@@ -445,9 +494,11 @@ void w_WSAWaitForMultipleEvents(X86 *c) {
     lan_pump();
     set_eax(c, guest_wait_objects(handles, n, all != 0, ms));
 }
-// Overlapped receive: only the UDP and raw sockets of the socket thread use it,
-// and the UDP stub never receives, so the receive stays posted. M2 completes it.
-void w_WSARecvAny(X86 *c) {
+// Overlapped receive: the socket thread's only receive call. A queued
+// datagram completes it at once; otherwise it is posted (lan_udp_post_recv)
+// and lan_pump completes it from the RX frame when one arrives for this
+// socket's port, writing guest memory and the event directly (net_lan.cpp).
+void wsa_recv_common(X86 *c, bool has_from) {
     Sock *k = sock_of(arg(c, 0));
     if (!k)
         return fail(c, WSAENOTSOCK, SOCKET_ERROR_);
@@ -455,12 +506,51 @@ void w_WSARecvAny(X86 *c) {
         log_once("tcp-overlapped-recv", "winsock: WSARecv/WSARecvFrom called on a TCP socket");
         return fail(c, WSAEOPNOTSUPP, SOCKET_ERROR_); // ponytail: TCP overlapped is unused by Carbon
     }
+    uint32_t wsabuf = arg(c, 1), bytes_addr = arg(c, 3);
+    uint32_t from_addr = has_from ? arg(c, 5) : 0;
+    uint32_t fromlen_addr = has_from ? arg(c, 6) : 0;
+    uint32_t ov_addr = arg(c, has_from ? 7 : 5);
+    if (!ov_addr || !gm_valid(ov_addr, 20)) {
+        log_once("wsarecv-sync", "winsock: WSARecv/WSARecvFrom without an OVERLAPPED is not modelled (M2)");
+        return fail(c, WSAEOPNOTSUPP, SOCKET_ERROR_);
+    }
+    uint32_t buf_addr = 0, buflen = 0;
+    if (wsabuf && gm_valid(wsabuf, 8)) {
+        buflen = rd32(wsabuf);
+        buf_addr = rd32(wsabuf + 4);
+    }
+    lan_pump();
+    if (buf_addr && gm_valid(buf_addr, buflen)) {
+        uint32_t fip; uint16_t fport;
+        int n = lan_udp_recvfrom(k->h, g_mem + buf_addr, (int)buflen, &fip, &fport);
+        if (n != -(int)WSAEWOULDBLOCK) { // a queued datagram: completes at once
+            uint32_t got = n >= 0 ? (uint32_t)n : buflen; // n<0 here is WSAEMSGSIZE: the buffer still got `buflen`
+            if (bytes_addr && gm_valid(bytes_addr, 4))
+                wr32(bytes_addr, got);
+            if (from_addr)
+                put_addr(from_addr, fromlen_addr, fip, fport);
+            return set_eax(c, 0);
+        }
+    }
+    uint32_t event = rd32(ov_addr + 16); // OVERLAPPED.hEvent
+    wr32(ov_addr + 0, STATUS_PENDING_);  // OVERLAPPED.Internal: pending until lan_pump completes it
+    lan_udp_post_recv(k->h, buf_addr, buflen, from_addr, fromlen_addr, ov_addr, event);
     fail(c, WSA_IO_PENDING, SOCKET_ERROR_);
 }
+void w_WSARecv(X86 *c) { wsa_recv_common(c, false); }
+void w_WSARecvFrom(X86 *c) { wsa_recv_common(c, true); }
 void w_WSAGetOverlappedResult(X86 *c) {
-    if (!sock_of(arg(c, 0)))
+    Sock *k = sock_of(arg(c, 0));
+    uint32_t ov = arg(c, 1), bytes_p = arg(c, 2);
+    if (!k)
         return fail(c, WSAENOTSOCK, 0);
-    fail(c, WSA_IO_INCOMPLETE, 0);
+    if (!ov || !gm_valid(ov, 20))
+        return fail(c, 10014, 0);
+    if (rd32(ov) == STATUS_PENDING_)
+        return fail(c, WSA_IO_INCOMPLETE, 0);
+    if (bytes_p && gm_valid(bytes_p, 4))
+        wr32(bytes_p, rd32(ov + 4)); // OVERLAPPED.InternalHigh: the byte count
+    set_eax(c, 1);
 }
 
 const ImportShim shims[] = {
@@ -499,8 +589,8 @@ const ImportShim shims[] = {
     {"WS2_32.dll", "setsockopt", 5, w_ok},        {"WS2_32.dll", "ord21", 5, w_ok},
     {"WS2_32.dll", "shutdown", 2, w_ok},          {"WS2_32.dll", "ord22", 2, w_ok},
     {"WS2_32.dll", "WSAIoctl", 9, w_listen_accept},
-    {"WS2_32.dll", "WSARecv", 7, w_WSARecvAny},
-    {"WS2_32.dll", "WSARecvFrom", 9, w_WSARecvAny},
+    {"WS2_32.dll", "WSARecv", 7, w_WSARecv},
+    {"WS2_32.dll", "WSARecvFrom", 9, w_WSARecvFrom},
     {"WS2_32.dll", "WSAGetOverlappedResult", 5, w_WSAGetOverlappedResult},
     {"WS2_32.dll", "WSACreateEvent", 0, w_WSACreateEvent},
     {"WS2_32.dll", "WSAWaitForMultipleEvents", 5, w_WSAWaitForMultipleEvents},

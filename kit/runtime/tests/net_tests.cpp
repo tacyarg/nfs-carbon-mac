@@ -88,6 +88,11 @@ static uint32_t cid_of(const net_slot *s) {
     memcpy(&cid, s->data + 4, 4);
     return cid;
 }
+// The 4 bytes of a network-order sockaddr's address field, read back as a
+// plain uint32 by rd32 (wire byte order, not host order).
+static uint32_t wire32(uint32_t ip_h) {
+    return (ip_h >> 24) | ((ip_h >> 8) & 0xff00) | ((ip_h << 8) & 0xff0000) | (ip_h << 24);
+}
 // A TCP frame from the server to us.
 static void rx_put(net_mailbox *m, uint16_t sport, uint16_t dport, uint8_t op, uint32_t cid,
                    const char *data = "") {
@@ -105,6 +110,23 @@ static void rx_put(net_mailbox *m, uint16_t sport, uint16_t dport, uint8_t op, u
     memcpy(s->data + NET_LAN_HDR, data, n);
     __atomic_add_fetch(&m->rx_head, 1, __ATOMIC_SEQ_CST);
 }
+// A UDP frame from `sip`:`sport` to our `dport` (op 0: a plain datagram).
+static void rx_put_udp(net_mailbox *m, uint32_t sip, uint16_t sport, uint16_t dport,
+                        const uint8_t *data, uint32_t n) {
+    net_slot *s = ring_slot(m, m->rx_off, NET_RX_SLOTS, m->rx_head);
+    s->len = NET_LAN_HDR + n;
+    s->kind = NET_KIND_LAN_UDP;
+    s->src_ip = sip;
+    s->dst_ip = ME;
+    s->src_port = sport;
+    s->dst_port = dport;
+    memset(s->data, 0, NET_LAN_HDR);
+    s->data[0] = NET_LAN_UDP_DATA;
+    if (n)
+        memcpy(s->data + NET_LAN_HDR, data, n);
+    __atomic_add_fetch(&m->rx_head, 1, __ATOMIC_SEQ_CST);
+}
+
 // Connects to the server's FESL port and completes the handshake.
 static int connected(net_mailbox *m, uint32_t *cid) {
     int h = lan_tcp_connect(SERVER, 18210);
@@ -321,6 +343,214 @@ static void test_events_and_pending_overlapped() {
     check(ws(&c, "WSACloseEvent", {ev}) == 1, "WSACloseEvent");
 }
 
+static void test_udp_bind_and_getsockname() {
+    X86 c;
+    loader_init_context(&c);
+    page_online(ME);
+    uint32_t s1 = ws(&c, "socket", {2, 2, 17});
+    check(s1 != INVALID_SOCKET_, "socket(UDP) online gives a SOCKET");
+    check(ws(&c, "bind", {s1, server_addr(SCRATCH + 0x10, 7000), 16}) == 0, "bind to port 7000");
+    check(ws(&c, "getsockname", {s1, SCRATCH + 0x60, (wr32(SCRATCH + 0x70, 16), SCRATCH + 0x70)}) == 0 &&
+              rd32(SCRATCH + 0x64) == wire32(ME) &&
+              (uint16_t)((rd16(SCRATCH + 0x62) >> 8) | (rd16(SCRATCH + 0x62) << 8)) == 7000,
+          "getsockname gives our address and port 7000");
+
+    uint32_t s2 = ws(&c, "socket", {2, 2, 17});
+    check(ws(&c, "bind", {s2, server_addr(SCRATCH + 0x10, 0), 16}) == 0, "bind port 0 picks an ephemeral port");
+    check(ws(&c, "getsockname", {s2, SCRATCH + 0x60, (wr32(SCRATCH + 0x70, 16), SCRATCH + 0x70)}) == 0, "getsockname");
+    uint16_t eph = (uint16_t)((rd16(SCRATCH + 0x62) >> 8) | (rd16(SCRATCH + 0x62) << 8));
+    check(eph >= 49152, "the ephemeral port is >= 49152 (got %u)", eph);
+
+    uint32_t s3 = ws(&c, "socket", {2, 2, 17});
+    check(ws(&c, "bind", {s3, server_addr(SCRATCH + 0x10, 7000), 16}) == 0xffffffffu &&
+              ws(&c, "WSAGetLastError", {}) == 10048,
+          "a second socket binding 7000 is WSAEADDRINUSE");
+    ws(&c, "closesocket", {s1});
+    ws(&c, "closesocket", {s2});
+    ws(&c, "closesocket", {s3});
+}
+
+static void test_udp_sendto_builds_frame() {
+    X86 c;
+    loader_init_context(&c);
+    net_mailbox *m = page_online(ME);
+    uint32_t s = ws(&c, "socket", {2, 2, 17});
+    memcpy(g_mem + SCRATCH + 0x200, "ECHO", 4);
+    check(ws(&c, "sendto", {s, SCRATCH + 0x200, 4, 0, server_addr(SCRATCH + 0x10, 18215), 16}) == 4,
+          "sendto 10.77.0.1:18215 reports 4 bytes sent");
+    net_slot *f = tx_take(m);
+    check(f && f->kind == NET_KIND_LAN_UDP && f->src_ip == ME && f->dst_ip == SERVER && f->dst_port == 18215 &&
+              f->len == NET_LAN_HDR + 4 && memcmp(f->data + NET_LAN_HDR, "ECHO", 4) == 0,
+          "puts one kind 3 frame with the payload byte-exact after the LAN header");
+    check(ws(&c, "getsockname", {s, SCRATCH + 0x60, (wr32(SCRATCH + 0x70, 16), SCRATCH + 0x70)}) == 0 &&
+              rd16(SCRATCH + 0x62) == (uint16_t)((f->src_port >> 8) | (f->src_port << 8)),
+          "an unbound socket got an ephemeral port on its first send, and the frame used it");
+
+    std::vector<uint8_t> big(NET_MAX_PAYLOAD - NET_LAN_HDR + 1, 'x');
+    memcpy(g_mem + SCRATCH + 0x600, big.data(), big.size());
+    check(ws(&c, "sendto", {s, SCRATCH + 0x600, (uint32_t)big.size(), 0, server_addr(SCRATCH + 0x10, 18215), 16}) ==
+                  0xffffffffu &&
+              ws(&c, "WSAGetLastError", {}) == 10040,
+          "oversize sendto is WSAEMSGSIZE");
+    check(!tx_take(m), "and nothing was sent");
+    ws(&c, "closesocket", {s});
+}
+
+static void test_udp_recvfrom_dispatch() {
+    X86 c;
+    loader_init_context(&c);
+    net_mailbox *m = page_online(ME);
+    uint32_t s = ws(&c, "socket", {2, 2, 17});
+    wr32(SCRATCH, 1);
+    ws(&c, "ioctlsocket", {s, 0x8004667eu, SCRATCH}); // non-blocking
+    ws(&c, "bind", {s, server_addr(SCRATCH + 0x10, 7001), 16});
+    check(ws(&c, "recvfrom", {s, SCRATCH + 0x300, 64, 0, SCRATCH + 0x350, (wr32(SCRATCH + 0x360, 16), SCRATCH + 0x360)}) ==
+                  0xffffffffu &&
+              ws(&c, "WSAGetLastError", {}) == 10035,
+          "an empty queue, non-blocking, is WSAEWOULDBLOCK");
+    rx_put_udp(m, SERVER, 18215, 7001, (const uint8_t *)"PONG", 4);
+    check(ws(&c, "recvfrom", {s, SCRATCH + 0x300, 64, 0, SCRATCH + 0x350, (wr32(SCRATCH + 0x360, 16), SCRATCH + 0x360)}) ==
+                  4 &&
+              memcmp(g_mem + SCRATCH + 0x300, "PONG", 4) == 0,
+          "a frame to the bound port is returned by recvfrom");
+    check(rd32(SCRATCH + 0x354) == wire32(SERVER) &&
+              rd16(SCRATCH + 0x352) == (uint16_t)((18215 >> 8) | (18215 << 8)),
+          "from is the sender's address and port");
+
+    rx_put_udp(m, SERVER, 18215, 9999, (const uint8_t *)"nobody", 6); // a port nobody bound
+    lan_pump();
+    check(ws(&c, "recvfrom", {s, SCRATCH + 0x300, 64, 0, 0, 0}) == 0xffffffffu &&
+              ws(&c, "WSAGetLastError", {}) == 10035,
+          "a frame to an unbound port is dropped");
+    ws(&c, "closesocket", {s});
+}
+
+static void test_udp_queue_cap() {
+    page_online(ME);
+    int h = lan_udp_open();
+    lan_udp_bind(h, 7002);
+    net_mailbox *m = lan_mailbox();
+    for (int i = 0; i < 65; ++i) {
+        uint8_t b = (uint8_t)i;
+        rx_put_udp(m, SERVER, 18215, 7002, &b, 1);
+    }
+    lan_pump();
+    int got = 0;
+    for (; got < 100; ++got) {
+        uint8_t buf[1];
+        uint32_t fip; uint16_t fport;
+        int n = lan_udp_recvfrom(h, buf, 1, &fip, &fport);
+        if (n == -10035)
+            break;
+        check(n == 1 && buf[0] == (uint8_t)got, "datagram %d returned in order", got);
+    }
+    check(got == 64, "64 of the 65 queued datagrams are returned, the 65th dropped (got %d)", got);
+    lan_udp_close(h);
+}
+
+static void test_udp_select_readable() {
+    X86 c;
+    loader_init_context(&c);
+    net_mailbox *m = page_online(ME);
+    uint32_t s = ws(&c, "socket", {2, 2, 17});
+    ws(&c, "bind", {s, server_addr(SCRATCH + 0x10, 7003), 16});
+    wr32(SCRATCH + 0x40, 0);
+    wr32(SCRATCH + 0x44, 0);
+    check(ws(&c, "select", {0, fdset(SCRATCH + 0x100, s), 0, 0, SCRATCH + 0x40}) == 0,
+          "an empty queue is not readable");
+    rx_put_udp(m, SERVER, 18215, 7003, (const uint8_t *)"hi", 2);
+    check(ws(&c, "select", {0, fdset(SCRATCH + 0x100, s), 0, 0, SCRATCH + 0x40}) == 1,
+          "a queued datagram makes it readable");
+    ws(&c, "closesocket", {s});
+}
+
+static void test_udp_recvfrom_truncates() {
+    X86 c;
+    loader_init_context(&c);
+    net_mailbox *m = page_online(ME);
+    uint32_t s = ws(&c, "socket", {2, 2, 17});
+    wr32(SCRATCH, 1);
+    ws(&c, "ioctlsocket", {s, 0x8004667eu, SCRATCH}); // non-blocking
+    ws(&c, "bind", {s, server_addr(SCRATCH + 0x10, 7004), 16});
+    rx_put_udp(m, SERVER, 18215, 7004, (const uint8_t *)"abcdef", 6);
+    check(ws(&c, "recvfrom", {s, SCRATCH + 0x300, 4, 0, 0, 0}) == 0xffffffffu &&
+              ws(&c, "WSAGetLastError", {}) == 10040 && memcmp(g_mem + SCRATCH + 0x300, "abcd", 4) == 0,
+          "a buffer smaller than the datagram fills it and reports WSAEMSGSIZE");
+    check(ws(&c, "recvfrom", {s, SCRATCH + 0x300, 4, 0, 0, 0}) == 0xffffffffu &&
+              ws(&c, "WSAGetLastError", {}) == 10035,
+          "and the datagram is gone");
+    ws(&c, "closesocket", {s});
+}
+
+static void test_udp_overlapped_recv() {
+    X86 c;
+    loader_init_context(&c);
+    net_mailbox *m = page_online(ME);
+    uint32_t ev = ws(&c, "WSACreateEvent", {});
+    uint32_t s = ws(&c, "socket", {2, 2, 17});
+    ws(&c, "bind", {s, server_addr(SCRATCH + 0x10, 7005), 16});
+    uint32_t wsabuf = SCRATCH + 0x400, ov = SCRATCH + 0x420;
+    wr32(wsabuf, 1000);
+    wr32(wsabuf + 4, SCRATCH + 0x800);
+    memset(g_mem + SCRATCH + 0x800, 0xAA, 1000); // sentinel: untouched bytes stay 0xAA
+    memset(g_mem + ov, 0, 20);
+    wr32(ov + 16, ev);
+    wr32(SCRATCH + 0x440, 16);
+    check(ws(&c, "WSARecvFrom", {s, wsabuf, 1, SCRATCH + 0x444, SCRATCH + 0x448, SCRATCH + 0x450, SCRATCH + 0x440, ov,
+                                 0}) == 0xffffffffu &&
+              ws(&c, "WSAGetLastError", {}) == 997,
+          "an overlapped UDP receive with nothing queued is posted (WSA_IO_PENDING)");
+    check(ws(&c, "WSAGetOverlappedResult", {s, ov, SCRATCH + 0x444, 0, SCRATCH + 0x448}) == 0 &&
+              ws(&c, "WSAGetLastError", {}) == 996,
+          "and stays incomplete (WSA_IO_INCOMPLETE)");
+    rx_put_udp(m, SERVER, 18215, 7005, (const uint8_t *)"PONG!", 5);
+    lan_pump();
+    check(ws(&c, "WSAWaitForMultipleEvents", {1, (wr32(SCRATCH + 0x20, ev), SCRATCH + 0x20), 0, 0, 0}) == 0,
+          "an arriving frame signals the event");
+    check(memcmp(g_mem + SCRATCH + 0x800, "PONG!", 5) == 0, "and the posted buffer holds the bytes");
+    check(rd32(SCRATCH + 0x454) == wire32(SERVER) && rd16(SCRATCH + 0x452) == (uint16_t)((18215 >> 8) | (18215 << 8)),
+          "from is set");
+    check(ws(&c, "WSAGetOverlappedResult", {s, ov, SCRATCH + 0x444, 0, SCRATCH + 0x448}) == 1 &&
+              rd32(SCRATCH + 0x444) == 5,
+          "WSAGetOverlappedResult now returns TRUE with the length");
+
+    rx_put_udp(m, SERVER, 18215, 7005, (const uint8_t *)"already", 7);
+    lan_pump();
+    wr32(wsabuf, 1000);
+    wr32(wsabuf + 4, SCRATCH + 0x900);
+    memset(g_mem + ov, 0, 20);
+    wr32(ov + 16, ev);
+    check(ws(&c, "WSARecvFrom", {s, wsabuf, 1, SCRATCH + 0x444, SCRATCH + 0x448, SCRATCH + 0x450, SCRATCH + 0x440, ov,
+                                 0}) == 0 &&
+              rd32(SCRATCH + 0x444) == 7 && memcmp(g_mem + SCRATCH + 0x900, "already", 7) == 0,
+          "with a datagram already queued, WSARecvFrom completes at once (0, bytes count set)");
+    ws(&c, "closesocket", {s});
+    ws(&c, "WSACloseEvent", {ev});
+}
+
+static void test_udp_closesocket_drops_posted_recv() {
+    X86 c;
+    loader_init_context(&c);
+    net_mailbox *m = page_online(ME);
+    uint32_t ev = ws(&c, "WSACreateEvent", {});
+    uint32_t s = ws(&c, "socket", {2, 2, 17});
+    ws(&c, "bind", {s, server_addr(SCRATCH + 0x10, 7006), 16});
+    uint32_t wsabuf = SCRATCH + 0x400, ov = SCRATCH + 0x420;
+    wr32(wsabuf, 1000);
+    wr32(wsabuf + 4, SCRATCH + 0xA00);
+    memset(g_mem + SCRATCH + 0xA00, 0xAA, 1000);
+    memset(g_mem + ov, 0, 20);
+    wr32(ov + 16, ev);
+    wr32(SCRATCH + 0x440, 16);
+    ws(&c, "WSARecvFrom",
+       {s, wsabuf, 1, SCRATCH + 0x444, SCRATCH + 0x448, SCRATCH + 0x450, SCRATCH + 0x440, ov, 0});
+    check(ws(&c, "closesocket", {s}) == 0, "closesocket with a posted receive");
+    rx_put_udp(m, SERVER, 18215, 7006, (const uint8_t *)"late", 4);
+    lan_pump(); // must not crash, and must not write the closed socket's buffer
+    check(g_mem[SCRATCH + 0xA00] == 0xAA, "a later frame to that port does not write the old buffer");
+    ws(&c, "WSACloseEvent", {ev});
+}
+
 int main() {
     mem_init();
     imports_init();
@@ -335,6 +565,14 @@ int main() {
     test_connect_refused_shows_in_select();
     test_raw_socket_refused();
     test_events_and_pending_overlapped();
+    test_udp_bind_and_getsockname();
+    test_udp_sendto_builds_frame();
+    test_udp_recvfrom_dispatch();
+    test_udp_queue_cap();
+    test_udp_select_readable();
+    test_udp_recvfrom_truncates();
+    test_udp_overlapped_recv();
+    test_udp_closesocket_drops_posted_recv();
     printf("%d checks, %d failures\n", g_checks, g_failures);
     mem_shutdown();
     return g_failures ? 1 : 0;
