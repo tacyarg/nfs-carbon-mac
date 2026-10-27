@@ -77,11 +77,72 @@ static void online_login_flow(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvo
     api->call_original(api, cpu->target, cpu);
 }
 
+/* First run: the page's name becomes the alias, autosave on, with no prompts. A new player is asked
+   "Create a new alias?" (memcard state 0xb), then for a name, then "enable Autosave and save your alias
+   now?" (0x14). Both dialogs go through the memcard state manager's ShowDialog (vtable+0x10c); this hook
+   answers Yes for them, with the page's name. A returning player's save loads without either dialog.
+   Trace: planning/research/2026-10-27-profile-skip-spike.md. */
+#define MC_SHOW_DIALOG 0x005d0d40u  /* thiscall, no arguments, plain RET */
+#define MC_CHANGE_STATE 0x00579200u /* thiscall (state) */
+#define MC_SETTINGS 0x00a8ad30u
+#define MC_SET_INT 0x004a04e0u      /* thiscall (id, value, -1, -1, -1) */
+#define MC_AUTOSAVE 0x13aeu
+#define MC_PROFILE_ROOT 0x00a97a7cu /* profile = [[[root]+0xd4]], alias char[32] at +0x10 */
+
+/* The page's name if it can be the alias: 1 to 15 of A-Z a-z 0-9 _ -. The alias also names the save
+   folder, and any RECOMP_ URL parameter reaches the environment, so any other name keeps the prompts. */
+static const char *alias_name(void) {
+    const char *n = getenv("RECOMP_ONLINE_NAME");
+    unsigned i = 0;
+    for (; n && n[i]; ++i) {
+        const char c = n[i];
+        if (i == 15 || !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                         c == '_' || c == '-'))
+            return NULL;
+    }
+    return i ? n : NULL;
+}
+
+static int g_alias_busy; /* the state change below shows 0x14 again through this hook */
+
+static void online_first_alias(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocation *inv, void *user) {
+    (void)inv;
+    (void)user;
+    const uint32_t sm = cpu->ecx;
+    const char *name = alias_name();
+    uint32_t state = get_u32(sm + 4), eax = 0;
+    if (get_u32(sm + 8) != 0 || !name || (state != 0x0b && state != 0x14)) {
+        api->call_original(api, cpu->target, cpu); /* not the boot flow's first-run dialogs */
+        return;
+    }
+    if (!g_alias_busy) {
+        g_alias_busy = 1;
+        if (state == 0x0b) { /* Yes, as the game's own answer does; skip the notices and the NAME box */
+            api->guest_write_u8(api, sm + 0xd5, 1);
+            uint32_t s = 0x1d; /* "name accepted": sets the (empty) name, then asks 0x14 */
+            api->guest_call(api, MC_CHANGE_STATE, sm, &s, 1, &eax);
+            state = get_u32(sm + 4);
+        }
+        if (state == 0x14) { /* Yes, with the page's name */
+            quick_put(get_u32(get_u32(get_u32(MC_PROFILE_ROOT) + 0xd4)) + 0x10, name, 32);
+            const uint32_t on[5] = {MC_AUTOSAVE, 1, ~0u, ~0u, ~0u};
+            api->guest_call(api, MC_SET_INT, MC_SETTINGS, on, 5, &eax);
+            uint32_t s = 0x19; /* the game's own save */
+            api->guest_call(api, MC_CHANGE_STATE, sm, &s, 1, &eax);
+            log_line("core.nfsc: first-run alias created from the page name, autosave on");
+        }
+        g_alias_busy = 0;
+    }
+    api->hook_return(api, cpu, cpu->eax, 0);
+}
+
 static void online_install(void) {
     if (setting("fesl_plain", 0) && install(FESL_SET_SECURE, online_fesl_set_secure, POP_HOOK_REPLACE, 24) == POP_OK)
         log_line("core.nfsc: FESL set to plain TCP (DirtySock secure flag kept off)");
     if (getenv("RECOMP_ONLINE_NAME") && install(LOGIN_FLOW_CREATE, online_login_flow, POP_HOOK_REPLACE, 25) == POP_OK)
         log_line("core.nfsc: quick online: signing in under the page's name");
+    if (alias_name() && install(MC_SHOW_DIALOG, online_first_alias, POP_HOOK_REPLACE, 20) == POP_OK)
+        log_line("core.nfsc: first run: the page's name becomes the alias, autosave on");
     if (!setting("hide_online", 1))
         return;
     if (install(FE_ADD_ITEM, online_add_item, POP_HOOK_REPLACE, 18) != POP_OK)
