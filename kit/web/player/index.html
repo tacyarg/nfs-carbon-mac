@@ -263,8 +263,13 @@
       <p class="hint">Change keys in the game's Options, Controls.</p>
       <!-- Each release: the new version in <summary> and its entry on top, written for players. -->
       <details class="changes">
-        <summary><b>v0.4.1</b> &middot; What's new</summary>
+        <summary><b>v0.4.2</b> &middot; What's new</summary>
         <div>
+          <h3>v0.4.2 &middot; Oct 27</h3>
+          <ul>
+            <li>Controllers work, including the built-in controls of Android handhelds such as the Retroid Pocket.</li>
+            <li>Phones and handhelds play fullscreen, in landscape.</li>
+          </ul>
           <h3>v0.4.1 &middot; Oct 27</h3>
           <ul>
             <li>The version and this list on the start page.</li>
@@ -674,6 +679,11 @@ async function start() {
 
 function play() {
   if (playBtn.disabled) return;
+  // Phones and handhelds (touch first) get the whole screen in landscape; Android grants
+  // fullscreen only inside a tap. Desktop stays windowed, as fullscreen would take Esc.
+  if (matchMedia("(pointer: coarse)").matches)
+    document.documentElement.requestFullscreen?.({ navigationUI: "hide" })
+      .then(() => screen.orientation?.lock?.("landscape")).catch(() => {});
   hideLanding();
   canvas.focus();
   window.Module.callMain([`--exe=${window.Module.exe}`]);
