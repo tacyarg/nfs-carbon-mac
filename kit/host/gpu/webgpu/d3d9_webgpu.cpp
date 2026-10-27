@@ -554,8 +554,10 @@ class WebGpuRenderer final : public D9Backend {
         memcpy(b.shadow.data() + offset, bytes, size);
         const uint64_t need = (total + 3) & ~3u;
         if (!b.buffer || wgpuBufferGetSize(b.buffer) < need) {
-            if (b.buffer)
+            if (b.buffer) {
                 wgpuBufferRelease(b.buffer);
+                forget_buffers();
+            }
             b.buffer = make_buffer(std::max<uint64_t>(need, 4),
                                    WGPUBufferUsage_Vertex | WGPUBufferUsage_Index);
             write_padded(b.buffer, 0, b.shadow.data(), b.shadow.size());
@@ -570,8 +572,10 @@ class WebGpuRenderer final : public D9Backend {
         auto it = buffers_.find(id);
         if (it == buffers_.end())
             return;
-        if (it->second.buffer)
+        if (it->second.buffer) {
             wgpuBufferRelease(it->second.buffer);
+            forget_buffers();
+        }
         buffers_.erase(it);
     }
 
@@ -835,10 +839,10 @@ class WebGpuRenderer final : public D9Backend {
             } else {
                 vb = zero_;
             }
-            wgpuRenderPassEncoderSetVertexBuffer(pass_, vl.slot_of[i], vb, off, WGPU_WHOLE_SIZE);
+            set_vertex_buffer(vl.slot_of[i], vb, off);
         }
         if (vl.zero)
-            wgpuRenderPassEncoderSetVertexBuffer(pass_, vl.zero_slot, zero_, 0, WGPU_WHOLE_SIZE);
+            set_vertex_buffer(vl.zero_slot, zero_, 0);
         encode_primitives(d);
         ++draws_;
     }
@@ -1186,7 +1190,7 @@ class WebGpuRenderer final : public D9Backend {
     }
 
     void retire(Tex &t) {
-        drop_groups();
+        forget_view(t.sample_view);
         if (t.imported) {
             dev_->destroy(t.imported);
             t.imported = {};
@@ -1293,12 +1297,25 @@ class WebGpuRenderer final : public D9Backend {
             drop_groups();
     }
     // Bind groups live across submits (a race frame has ~9 and reuses ~570 groups). A group's key
-    // holds view handles, which a new view may reuse once one is released, so all go when any
-    // texture retires.
+    // holds view handles, which a new view may reuse once one is released, so a texture's groups
+    // go when it retires (~25 a second in a race, most of them never sampled).
     void drop_groups() {
         for (auto &kv : groups_)
-            wgpuBindGroupRelease(kv.second);
+            wgpuBindGroupRelease(kv.second.group);
         groups_.clear();
+    }
+    void forget_view(WGPUTextureView v) {
+        if (!v)
+            return;
+        for (auto it = groups_.begin(); it != groups_.end();) {
+            if (std::find(std::begin(it->second.views), std::end(it->second.views), v) !=
+                std::end(it->second.views)) {
+                wgpuBindGroupRelease(it->second.group);
+                it = groups_.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
     void read_queries(uint64_t serial, WGPUBuffer readback, uint32_t n, WGPUBuffer resolve,
                       WGPUQuerySet qs) {
@@ -1846,7 +1863,7 @@ class WebGpuRenderer final : public D9Backend {
         const uint64_t key = fnv(&k, sizeof k);
         auto it = groups_.find(key);
         if (it != groups_.end())
-            return it->second;
+            return it->second.group;
         std::vector<WGPUBindGroupEntry> e;
         for (uint32_t i = 0; i < 4; ++i) {
             WGPUBindGroupEntry b = WGPU_BIND_GROUP_ENTRY_INIT;
@@ -1873,7 +1890,9 @@ class WebGpuRenderer final : public D9Backend {
         d.entryCount = e.size();
         d.entries = e.data();
         WGPUBindGroup g = wgpuDeviceCreateBindGroup(device_, &d);
-        groups_[key] = g;
+        Group &entry = groups_[key];
+        entry.group = g;
+        memcpy(entry.views, k.views, sizeof k.views);
         return g;
     }
 
@@ -2135,15 +2154,13 @@ class WebGpuRenderer final : public D9Backend {
                 if ((uint64_t)(d.start + count) * isize > b->second.shadow.size())
                     return;
                 b->second.used = serial_;
-                wgpuRenderPassEncoderSetIndexBuffer(pass_, b->second.buffer, itype, 0,
-                                                    WGPU_WHOLE_SIZE);
+                set_index_buffer(b->second.buffer, itype, 0, WGPU_WHOLE_SIZE);
                 wgpuRenderPassEncoderDrawIndexed(pass_, count, 1, d.start, d.base_vertex, 0);
             } else {
                 uint64_t off = 0;
                 WGPUBuffer b = ring_write(d.inline_indices, (uint64_t)count * isize, &off,
                                           WGPUBufferUsage_Vertex);
-                wgpuRenderPassEncoderSetIndexBuffer(pass_, b, itype, off,
-                                                    round_up((uint64_t)count * isize, 4));
+                set_index_buffer(b, itype, off, round_up((uint64_t)count * isize, 4));
                 wgpuRenderPassEncoderDrawIndexed(pass_, count, 1, 0, 0, 0);
             }
             return;
@@ -2174,7 +2191,7 @@ class WebGpuRenderer final : public D9Backend {
         }
         uint64_t off = 0;
         WGPUBuffer b = ring_write(fan_.data(), fan_.size() * 4, &off, WGPUBufferUsage_Vertex);
-        wgpuRenderPassEncoderSetIndexBuffer(pass_, b, WGPUIndexFormat_Uint32, off, fan_.size() * 4);
+        set_index_buffer(b, WGPUIndexFormat_Uint32, off, fan_.size() * 4);
         wgpuRenderPassEncoderDrawIndexed(pass_, count * 3, 1, 0, 0, 0);
     }
 
@@ -2241,7 +2258,36 @@ class WebGpuRenderer final : public D9Backend {
         bool viewport_valid = false, scissor_valid = false;
         float viewport[6] = {};
         uint32_t scissor[4] = {};
+        // Buffers bound in this pass: a draw rebinding the same one is skipped (~2,100 a race frame
+        // each). Handles are reused once released, so a release forgets them all (forget_buffers).
+        WGPUBuffer vb[8] = {};
+        uint64_t vb_off[8] = {};
+        WGPUBuffer ib = nullptr;
+        WGPUIndexFormat ib_format = WGPUIndexFormat_Undefined;
+        uint64_t ib_off = 0, ib_size = 0;
     };
+    void set_vertex_buffer(uint32_t slot, WGPUBuffer b, uint64_t off) {
+        if (slot < 8 && es_.vb[slot] == b && es_.vb_off[slot] == off)
+            return;
+        wgpuRenderPassEncoderSetVertexBuffer(pass_, slot, b, off, WGPU_WHOLE_SIZE);
+        if (slot < 8) {
+            es_.vb[slot] = b;
+            es_.vb_off[slot] = off;
+        }
+    }
+    void set_index_buffer(WGPUBuffer b, WGPUIndexFormat f, uint64_t off, uint64_t size) {
+        if (es_.ib == b && es_.ib_format == f && es_.ib_off == off && es_.ib_size == size)
+            return;
+        wgpuRenderPassEncoderSetIndexBuffer(pass_, b, f, off, size);
+        es_.ib = b;
+        es_.ib_format = f;
+        es_.ib_off = off;
+        es_.ib_size = size;
+    }
+    void forget_buffers() {
+        std::fill(std::begin(es_.vb), std::end(es_.vb), nullptr);
+        es_.ib = nullptr;
+    }
 
     WebGpuDevice *dev_;
     WGPUDevice device_;
@@ -2289,7 +2335,11 @@ class WebGpuRenderer final : public D9Backend {
     std::unordered_map<uint64_t, WGPURenderPipeline> pipelines_;
     uint64_t last_pipeline_key_ = 0;
     WGPURenderPipeline last_pipeline_ = nullptr;
-    std::unordered_map<uint64_t, WGPUBindGroup> groups_;
+    struct Group {
+        WGPUBindGroup group = nullptr;
+        WGPUTextureView views[16] = {};
+    };
+    std::unordered_map<uint64_t, Group> groups_;
     std::unordered_map<uint64_t, WGPUSampler> samplers_;
     WGPUSampler shadow_sampler_ = nullptr;
     std::unordered_map<uint64_t, WGPUTextureView> fitted_;
