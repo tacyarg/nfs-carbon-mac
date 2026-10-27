@@ -47,7 +47,8 @@ enum : uint32_t {
     AABB = 256u,    // Test75: native bounding-box routines (native/aabb.cpp)
     SLICE = 512u,   // the baton slice: 1 ms before, RECOMP_SCHED_SLICE_MS now (kernel32.cpp sched_checkpoint)
     RING = 1024u,   // WebGPU ring data: a writeBuffer per draw before, one per chunk at submit now (d3d9_webgpu.cpp)
-    GROUPS = 2048u  // WebGPU bind groups: dropped at every submit before, when a texture retires now (d3d9_webgpu.cpp)
+    GROUPS = 2048u, // WebGPU bind groups: dropped at every submit before, when a texture retires now (d3d9_webgpu.cpp)
+    TSC = 4096u     // RDTSC: a clock read on every one before, on every 64th now (cpu.cpp recomp_rdtsc)
 };
 inline uint32_t switches() {
     static const uint32_t m = [] {
@@ -79,6 +80,8 @@ inline uint32_t switches() {
             bits |= RING;
         if (strstr(e, "groups"))
             bits |= GROUPS;
+        if (strstr(e, "tsc"))
+            bits |= TSC;
         return bits;
     }();
     return m;

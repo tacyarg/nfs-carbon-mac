@@ -13,6 +13,7 @@
 #include "thunks.h"
 #include "loader.h"
 #include "seh.h"
+#include "../platform/ab_phase.h"
 #include "../platform/os.h"
 
 #include <setjmp.h>
@@ -351,12 +352,17 @@ void recomp_breakpoint(X86 *c, uint32_t addr) {
 }
 
 // A monotonically increasing cycle counter derived from the millisecond clock,
-// so repeated runs see the same ordering.
+// so repeated runs see the same ordering. On the web a clock read is a call out to JS, and the
+// audio thread's timing code reads the counter often enough to cost it ~27 ms/s, so the clock is
+// read on every 64th call only. Every call still advances the counter, so a spin on it still ends.
 void recomp_rdtsc(X86 *c) {
     static uint64_t tsc = 0;
-    uint64_t from_ms = (uint64_t)host_millis() * 1000000ull;
-    if (from_ms > tsc)
-        tsc = from_ms;
+    static uint32_t calls = 0;
+    if ((calls++ & 63) == 0 || recomp_ab::old(recomp_ab::TSC)) {
+        uint64_t from_ms = (uint64_t)host_millis() * 1000000ull;
+        if (from_ms > tsc)
+            tsc = from_ms;
+    }
     tsc += 1000;
     c->r[R_EAX] = (uint32_t)tsc;
     c->r[R_EDX] = (uint32_t)(tsc >> 32);
