@@ -268,8 +268,12 @@
       <p class="hint">Change keys in the game's Options, Controls.</p>
       <!-- Each release: the new version in <summary> and its entry on top, written for players. -->
       <details class="changes">
-        <summary><b>v0.4.5</b> &middot; What's new</summary>
+        <summary><b>v0.4.6</b> &middot; What's new</summary>
         <div>
+          <h3>v0.4.6 &middot; Oct 27</h3>
+          <ul>
+            <li>Phones and handhelds draw the game at up to 720p, for smoother play.</li>
+          </ul>
           <h3>v0.4.5 &middot; Oct 27</h3>
           <ul>
             <li>High-resolution screens draw the game at up to 1080p, which keeps it faster.</li>
@@ -335,9 +339,10 @@ async function checkVersion() {
 }
 setInterval(checkVersion, 5 * 60 * 1000);
 document.getElementById("update-reload").addEventListener("click", () => location.reload());
-// The game renders at most ~1080p worth of pixels: SDL sizes the canvas by devicePixelRatio, so a Retina
-// screen would draw 2-3x that. ?maxpx=0 renders at the screen's full resolution.
-const maxPx = +(new URLSearchParams(location.search).get("maxpx") ?? 1920 * 1080);
+// The game renders at most ~1080p worth of pixels, ~720p on phones and handhelds: SDL sizes the canvas by
+// devicePixelRatio, so a Retina screen would draw 2-3x that. ?maxpx=0 renders at the screen's full resolution.
+const maxPx = +(new URLSearchParams(location.search).get("maxpx") ??
+  (matchMedia("(pointer: coarse)").matches ? 1280 * 720 : 1920 * 1080));
 const dpr = Object.getOwnPropertyDescriptor(window, "devicePixelRatio") ?? Object.getOwnPropertyDescriptor(Window.prototype, "devicePixelRatio");
 if (maxPx > 0 && dpr?.get)
   Object.defineProperty(window, "devicePixelRatio", { configurable: true,
