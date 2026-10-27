@@ -215,7 +215,7 @@ bool platform_ui_pointer_capture_supported() {
 }
 
 int platform_ui_default_overlay() {
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
     return 0;
 #else
     return 2;
