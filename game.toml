@@ -249,8 +249,10 @@ min_free_mb = 300
 required_dirs = ["CARS", "FRONTEND", "GLOBAL", "SOUND", "TRACKS"]
 
 [bundle]
-# The stock runtime DLLs stay out; the rebased copies are bundled instead.
-exclude = ["Uninstall", "Support", "scripts", "SAVE", "*.dll", "*.asi", "*.txt"]
+# The stock runtime DLLs stay out; the rebased copies are bundled instead. ONLINE/playnowconfig.txt must stay in:
+# it is PlayNow's matchmaking config, and without it Custom Match hangs at "Creating game session..." (a "*.txt"
+# rule here once hid it); CREDITS holds the game's only other text files.
+exclude = ["Uninstall", "Support", "scripts", "SAVE", "*.dll", "*.asi", "CREDITS"]
 
 [settings]
 # The settings page (F10): Window = Windowed / Borderless / Full screen, plus
