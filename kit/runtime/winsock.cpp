@@ -356,7 +356,7 @@ void w_getsockopt(X86 *c) {
 }
 
 void put_addr(uint32_t sa, uint32_t plen, uint32_t ip_h, uint16_t port) {
-    if (!sa || !plen || !gm_valid(sa, 16))
+    if (!sa || !plen || !gm_valid(sa, 16) || !gm_valid(plen, 4))
         return;
     memset(g_mem + sa, 0, 16);
     wr16(sa, 2);
@@ -506,7 +506,7 @@ void wsa_recv_common(X86 *c, bool has_from) {
         log_once("tcp-overlapped-recv", "winsock: WSARecv/WSARecvFrom called on a TCP socket");
         return fail(c, WSAEOPNOTSUPP, SOCKET_ERROR_); // ponytail: TCP overlapped is unused by Carbon
     }
-    uint32_t wsabuf = arg(c, 1), bytes_addr = arg(c, 3);
+    uint32_t wsabuf = arg(c, 1), bytes_addr = arg(c, 3), flags_addr = arg(c, 4);
     uint32_t from_addr = has_from ? arg(c, 5) : 0;
     uint32_t fromlen_addr = has_from ? arg(c, 6) : 0;
     uint32_t ov_addr = arg(c, has_from ? 7 : 5);
@@ -524,11 +524,19 @@ void wsa_recv_common(X86 *c, bool has_from) {
         uint32_t fip; uint16_t fport;
         int n = lan_udp_recvfrom(k->h, g_mem + buf_addr, (int)buflen, &fip, &fport);
         if (n != -(int)WSAEWOULDBLOCK) { // a queued datagram: completes at once
-            uint32_t got = n >= 0 ? (uint32_t)n : buflen; // n<0 here is WSAEMSGSIZE: the buffer still got `buflen`
+            if (n < 0)
+                return fail(c, (uint32_t)-n, SOCKET_ERROR_); // WSAEMSGSIZE: the buffer holds the first `buflen` bytes
             if (bytes_addr && gm_valid(bytes_addr, 4))
-                wr32(bytes_addr, got);
+                wr32(bytes_addr, (uint32_t)n);
+            if (flags_addr && gm_valid(flags_addr, 4))
+                wr32(flags_addr, 0);
             if (from_addr)
                 put_addr(from_addr, fromlen_addr, fip, fport);
+            // as Windows does on an immediate completion too: the OVERLAPPED says done and its event is set
+            wr32(ov_addr + 0, 0);
+            wr32(ov_addr + 4, (uint32_t)n);
+            if (uint32_t event = rd32(ov_addr + 16))
+                win32_signal_event(event, false);
             return set_eax(c, 0);
         }
     }
@@ -550,6 +558,8 @@ void w_WSAGetOverlappedResult(X86 *c) {
         return fail(c, WSA_IO_INCOMPLETE, 0);
     if (bytes_p && gm_valid(bytes_p, 4))
         wr32(bytes_p, rd32(ov + 4)); // OVERLAPPED.InternalHigh: the byte count
+    if (uint32_t flags_p = arg(c, 4); flags_p && gm_valid(flags_p, 4))
+        wr32(flags_p, 0);
     set_eax(c, 1);
 }
 

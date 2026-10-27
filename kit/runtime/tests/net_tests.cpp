@@ -520,10 +520,31 @@ static void test_udp_overlapped_recv() {
     wr32(wsabuf + 4, SCRATCH + 0x900);
     memset(g_mem + ov, 0, 20);
     wr32(ov + 16, ev);
+    ws(&c, "WSAResetEvent", {ev});
+    wr32(SCRATCH + 0x448, 0xffffffffu); // flags: in/out, must come back 0
     check(ws(&c, "WSARecvFrom", {s, wsabuf, 1, SCRATCH + 0x444, SCRATCH + 0x448, SCRATCH + 0x450, SCRATCH + 0x440, ov,
                                  0}) == 0 &&
               rd32(SCRATCH + 0x444) == 7 && memcmp(g_mem + SCRATCH + 0x900, "already", 7) == 0,
           "with a datagram already queued, WSARecvFrom completes at once (0, bytes count set)");
+    check(ws(&c, "WSAWaitForMultipleEvents", {1, (wr32(SCRATCH + 0x20, ev), SCRATCH + 0x20), 0, 0, 0}) == 0 &&
+              rd32(ov + 0) == 0 && rd32(ov + 4) == 7 && rd32(SCRATCH + 0x448) == 0,
+          "and, as Windows does, also sets the event, OVERLAPPED.Internal/InternalHigh and the flags");
+
+    rx_put_udp(m, SERVER, 18215, 7005, (const uint8_t *)"0123456789", 10);
+    lan_pump();
+    wr32(wsabuf, 4);
+    memset(g_mem + ov, 0, 20);
+    wr32(ov + 16, ev);
+    check(ws(&c, "WSARecvFrom", {s, wsabuf, 1, SCRATCH + 0x444, SCRATCH + 0x448, SCRATCH + 0x450, SCRATCH + 0x440, ov,
+                                 0}) == 0xffffffffu &&
+              ws(&c, "WSAGetLastError", {}) == 10040 && memcmp(g_mem + SCRATCH + 0x900, "0123", 4) == 0,
+          "a queued datagram bigger than the buffer fails at once with WSAEMSGSIZE, the buffer filled");
+    wr32(SCRATCH + 0x440, 16);
+    rx_put_udp(m, SERVER, 18215, 7005, (const uint8_t *)"x", 1);
+    lan_pump();
+    wr32(wsabuf, 1000);
+    check(ws(&c, "recvfrom", {s, SCRATCH + 0x900, 1000, 0, SCRATCH + 0x450, 0xfffffff0u}) == 1,
+          "a fromlen pointer outside guest memory is not written (and the receive still works)");
     ws(&c, "closesocket", {s});
     ws(&c, "WSACloseEvent", {ev});
 }
