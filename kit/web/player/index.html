@@ -184,6 +184,11 @@
   }
   .update[hidden] { display: none; }
   .update b { color: var(--yellow); }
+  .ver {
+    position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 40; padding: 1px 8px;
+    border-radius: 0 0 5px 5px; background: rgba(8, 16, 18, 0.6); font: 11px/1.3 var(--font-ui);
+    color: var(--text); opacity: 0.7; pointer-events: none;
+  }
 
   :focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
   :focus:not(:focus-visible) { outline: none; }
@@ -263,8 +268,13 @@
       <p class="hint">Change keys in the game's Options, Controls.</p>
       <!-- Each release: the new version in <summary> and its entry on top, written for players. -->
       <details class="changes">
-        <summary><b>v0.4.4</b> &middot; What's new</summary>
+        <summary><b>v0.4.5</b> &middot; What's new</summary>
         <div>
+          <h3>v0.4.5 &middot; Oct 27</h3>
+          <ul>
+            <li>High-resolution screens draw the game at up to 1080p, which keeps it faster.</li>
+            <li>The version you are playing shows at the top of the game.</li>
+          </ul>
           <h3>v0.4.4 &middot; Oct 27</h3>
           <ul>
             <li>Races run faster, most of all on busy computers and on phones.</li>
@@ -310,6 +320,7 @@
 </div>
 <div class="update" id="update" hidden><span>A new version, <b id="update-v"></b>, is out.</span>
   <button type="button" class="field-btn" id="update-reload">Reload</button></div>
+<div class="ver" id="ver"></div>
 <script>
 "use strict";
 // The What's new list closes on a click anywhere else, as a menu would.
@@ -324,6 +335,16 @@ async function checkVersion() {
 }
 setInterval(checkVersion, 5 * 60 * 1000);
 document.getElementById("update-reload").addEventListener("click", () => location.reload());
+// The game renders at most ~1080p worth of pixels: SDL sizes the canvas by devicePixelRatio, so a Retina
+// screen would draw 2-3x that. ?maxpx=0 renders at the screen's full resolution.
+const maxPx = +(new URLSearchParams(location.search).get("maxpx") ?? 1920 * 1080);
+const dpr = Object.getOwnPropertyDescriptor(window, "devicePixelRatio") ?? Object.getOwnPropertyDescriptor(Window.prototype, "devicePixelRatio");
+if (maxPx > 0 && dpr?.get)
+  Object.defineProperty(window, "devicePixelRatio", { configurable: true,
+    get: () => Math.min(dpr.get.call(window), Math.max(1, Math.sqrt(maxPx / (innerWidth * innerHeight)))) });
+// Which build runs: the game's files load under this version (?v=), so the tag names what is running.
+const verEl = document.getElementById("ver");
+setInterval(() => { verEl.textContent = `${pageVersion} \u00b7 ${canvas.width}\u00d7${canvas.height}`; }, 1000);
 const canvas = document.getElementById("canvas");
 const landing = document.getElementById("landing");
 const lineEl = document.getElementById("line");
@@ -621,6 +642,7 @@ async function start() {
   const Module = {
     canvas,
     exe,
+    locateFile: (path) => `${path}?v=${pageVersion}`,
     preinitializedWebGPUDevice: device,
     noInitialRun: true,
     // Lets Module.onExit fire when the game calls exit() (kernel32.cpp
@@ -681,7 +703,7 @@ async function start() {
   window.Module = Module;
   if (lan) lanBridge(Module, lan);
   const script = document.createElement("script");
-  script.src = "@APP@.js";
+  script.src = `@APP@.js?v=${pageVersion}`;
   script.onerror = () => status("The game's web build is missing.", true);
   document.body.append(script);
 }
