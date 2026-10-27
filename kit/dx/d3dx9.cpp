@@ -360,6 +360,11 @@ struct FxParam {
     uint32_t guest_name = 0, guest_semantic = 0;
     std::vector<uint32_t> annotations; // indices into FxEffect::annotations
     bool shared = false;               // D3DX_PARAMETER_SHARED: one value across the effect pool
+    // A shared parameter's value as last sent to or received from the pool. A setter that leaves the
+    // value equal to it has nothing to send: every peer holds it too (share_parameter).
+    std::vector<uint8_t> synced;
+    uint32_t synced_texture = 0;
+    bool is_synced = false;
     uint64_t stamp = 0;                // g_param_stamp at the last write
     // Test71: a sampler's texture parameter, resolved once per (parameter count, stamp) instead of a
     // string-keyed lookup on every CommitChanges (-2: not resolved yet, -1: none).
@@ -2048,7 +2053,7 @@ static void share_parameter(uint32_t from_effect, uint32_t index) {
     if (src == effects().end() || !src->second.pool || index >= src->second.params.size())
         return;
     FxEffect &fx = src->second;
-    const FxParam &value = fx.params[index];
+    FxParam &value = fx.params[index];
     if (!value.shared)
         return;
     if (fx.peers_generation != g_effect_generation) {
@@ -2085,6 +2090,16 @@ static void share_parameter(uint32_t from_effect, uint32_t index) {
         set_param_texture(*other, value.texture);
         param_touched(*other);
     }
+    // Stamped on every peer, not only the sender: a peer that later sets back the value it last
+    // sent must still send it, because the pool has moved on since.
+    for (FxParam *p : found->second) {
+        p->synced = value.value;
+        p->synced_texture = value.texture;
+        p->is_synced = true;
+    }
+    value.synced = value.value;
+    value.synced_texture = value.texture;
+    value.is_synced = true;
 }
 // A new effect starts from the pool's current value of each shared parameter.
 static void join_pool(uint32_t effect_id) {
@@ -2113,12 +2128,18 @@ template <void (*F)(X86 *)> void shared_setter(X86 *c) {
     uint32_t id = o ? o->id : 0;
     uint32_t handle = arg(c, 1);
     int64_t index = -1;
+    FxParam *shared = nullptr; // stays valid across F: an effect's parameter vector never resizes
     if (FxEffect *fx = this_fx(c))
         if (FxParam *p = param_of(*fx, handle);
-            p && p->shared && p >= fx->params.data() && p < fx->params.data() + fx->params.size())
+            p && p->shared && p >= fx->params.data() && p < fx->params.data() + fx->params.size()) {
             index = p - fx->params.data();
+            shared = p;
+        }
     F(c);
-    if (index >= 0)
+    // The game sets the same matrices every draw; sharing them again cost ~27 ms/s in a race.
+    if (index >= 0 && (recomp_ab::old(recomp_ab::PARAMS) ||
+                       !(shared->is_synced && shared->synced_texture == shared->texture &&
+                         shared->synced == shared->value)))
         share_parameter(id, (uint32_t)index);
 }
 

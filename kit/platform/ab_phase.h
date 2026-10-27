@@ -48,7 +48,8 @@ enum : uint32_t {
     SLICE = 512u,   // the baton slice: 1 ms before, RECOMP_SCHED_SLICE_MS now (kernel32.cpp sched_checkpoint)
     RING = 1024u,   // WebGPU ring data: a writeBuffer per draw before, one per chunk at submit now (d3d9_webgpu.cpp)
     GROUPS = 2048u, // WebGPU bind groups: dropped at every submit before, when a texture retires now (d3d9_webgpu.cpp)
-    TSC = 4096u     // RDTSC: a clock read on every one before, on every 64th now (cpu.cpp recomp_rdtsc)
+    TSC = 4096u,    // RDTSC: a clock read on every one before, on every 64th now (cpu.cpp recomp_rdtsc)
+    PARAMS = 8192u  // shared effect parameters: sent to the pool on every set before, on change now (d3dx9.cpp)
 };
 inline uint32_t switches() {
     static const uint32_t m = [] {
@@ -82,6 +83,8 @@ inline uint32_t switches() {
             bits |= GROUPS;
         if (strstr(e, "tsc"))
             bits |= TSC;
+        if (strstr(e, "params"))
+            bits |= PARAMS;
         return bits;
     }();
     return m;

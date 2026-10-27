@@ -363,7 +363,7 @@ static std::vector<uint8_t> shader(bool vertex, const char *name, uint32_t index
     return out.data;
 }
 
-static std::vector<uint8_t> effect() {
+static std::vector<uint8_t> effect(bool shared_many = false) {
     Bytes b;
     b.words({0}); // offset 0 is the null name
     const uint32_t sn = b.text("Switch"), mn = b.text("Many"), tn = b.text("Main"),
@@ -374,7 +374,7 @@ static std::vector<uint8_t> effect() {
     const uint32_t vt = b.words({16, 4, 0, 0, 0}), pt = b.words({15, 4, 0, 0, 0});
     const uint32_t vi = b.words({1}), pi = b.words({2});
     const uint32_t start = b.words({2, 1, 0, 2});
-    b.words({st, sv, 0, 0, mt, mv, 0, 0});
+    b.words({st, sv, 0, 0, mt, mv, shared_many ? 1u : 0u, 0}); // flags: D3DX_PARAMETER_SHARED
     b.words({tn, 0, 1, pn, 0, 2, 146, 0, vt, vi, 147, 0, pt, pi});
     b.words({2, 0}); // two shader objects, no extra resources
     for (bool vertex : {true, false}) {
@@ -677,10 +677,9 @@ static void test_device_booleans(uint32_t dev) {
     }
 }
 
-static void test_effect_booleans(uint32_t dev) {
-    const auto fx = effect();
-    // Minimal loaded PE resource directory. This exercises the same export
-    // used by a game, with an allocated guest module instead of a disk image.
+// Minimal loaded PE resource directory. This exercises the same export
+// used by a game, with an allocated guest module instead of a disk image.
+static uint32_t effect_from_resource(uint32_t dev, const std::vector<uint8_t> &fx, uint32_t pool) {
     const uint32_t module = heap_alloc(0x1000 + uint32_t(fx.size()), true, 16);
     CHECK(module != 0);
     wr32(module, 0x5a4d);
@@ -701,8 +700,50 @@ static void test_effect_booleans(uint32_t dev) {
     wr32(root + 0x64, uint32_t(fx.size()));
     memcpy(gm_ptr(module + 0x1000), fx.data(), fx.size());
     CHECK(call_shim(tramp("d3dx9_26.dll", "D3DXCreateEffectFromResourceA"),
-                    {dev, module, 1, 0, 0, 0, 0, sc(0), 0}) == 0);
-    const uint32_t e = rd32(sc(0));
+                    {dev, module, 1, 0, 0, 0, pool, sc(0), 0}) == 0);
+    return rd32(sc(0));
+}
+
+// A shared parameter holds one value across the pool, whichever effect sets it and in any order:
+// setting a value an effect last received from a peer must still reach the peer that changed since.
+static void test_effect_pool_sharing(uint32_t dev) {
+    CHECK(call_shim(tramp("d3dx9_26.dll", "D3DXCreateEffectPool"), {sc(0)}) == 0);
+    const uint32_t pool = rd32(sc(0));
+    CHECK(pool != 0);
+    const auto fx = effect(true);
+    const uint32_t a = effect_from_resource(dev, fx, pool), b = effect_from_resource(dev, fx, pool);
+    CHECK(a != 0 && b != 0 && a != b);
+    memcpy(gm_ptr(sc(0x200)), "Many", 5);
+    const uint32_t ma = call_method(a, 9, {0, sc(0x200)}), mb = call_method(b, 9, {0, sc(0x200)});
+    CHECK(ma != 0 && mb != 0);
+    auto set = [](uint32_t e, uint32_t h, uint32_t x, uint32_t y) {
+        wr32(sc(0x240), x);
+        wr32(sc(0x244), y);
+        CHECK(call_method(e, 24, {h, sc(0x240), 2}) == 0); // SetBoolArray
+    };
+    auto holds = [](uint32_t e, uint32_t h, uint32_t x, uint32_t y) {
+        wr32(sc(0x250), 7);
+        wr32(sc(0x254), 7);
+        CHECK(call_method(e, 25, {h, sc(0x250), 2}) == 0); // GetBoolArray
+        return rd32(sc(0x250)) == x && rd32(sc(0x254)) == y;
+    };
+    set(a, ma, 1, 0);
+    CHECK(holds(b, mb, 1, 0));
+    set(b, mb, 0, 1);
+    CHECK(holds(a, ma, 0, 1));
+    set(a, ma, 1, 0); // what a sent first, after b changed it
+    CHECK(holds(b, mb, 1, 0));
+    set(a, ma, 1, 0); // unchanged: nothing to send, b already holds it
+    CHECK(holds(b, mb, 1, 0) && holds(a, ma, 1, 0));
+    set(b, mb, 1, 1);
+    CHECK(holds(a, ma, 1, 1));
+    call_method(a, 2);
+    call_method(b, 2);
+    call_method(pool, 2);
+}
+
+static void test_effect_booleans(uint32_t dev) {
+    const uint32_t e = effect_from_resource(dev, effect(), 0);
     CHECK(e != 0);
     memcpy(gm_ptr(sc(0x200)), "Switch", 7);
     memcpy(gm_ptr(sc(0x220)), "Many", 5);
@@ -834,6 +875,7 @@ int main() {
     test_depth_stencil_get(dev);
     test_surface_container_refs(dev);
     test_effect_booleans(dev);
+    test_effect_pool_sharing(dev);
     test_volume(dev);
     test_state_getters_and_readback(dev);
     const uint32_t bound = make_volume(dev);
