@@ -10449,6 +10449,32 @@ static void d9_pixel(uint32_t id, uint32_t x, uint32_t y, uint8_t out[4]) {
     memcpy(out, &px[(y * 8 + x) * 4], 4);
 }
 
+// A present is queued like a draw: the game goes on while the render thread is busy, and waits
+// only while the previous present has not run (one frame in flight).
+void host_d9_hold_for_test(std::atomic<bool> *hold);
+static void test_d3d9_present_does_not_wait() {
+    const uint32_t rt_id = 90301;
+    HostD9TextureDesc rt{rt_id, HOST_D9_TEX_2D, 8, 8, 1, 21, HOST_D9_USAGE_RENDERTARGET};
+    host_d9_texture_define(&rt);
+    std::atomic<bool> hold{true};
+    host_d9_hold_for_test(&hold);
+    std::atomic<int> presented{0};
+    std::thread game([&] {
+        host_d9_present(rt_id, 8, 8);
+        ++presented;
+        host_d9_present(rt_id, 8, 8); // the first has not run yet: this one waits
+        ++presented;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    CHECK_EQ(presented.load(), 1);
+    hold = false;
+    game.join();
+    CHECK_EQ(presented.load(), 2);
+    uint8_t px[4];
+    d9_pixel(rt_id, 0, 0, px); // drains the queue
+    host_d9_texture_drop(rt_id);
+}
+
 // A synthetic 3D lookup with eight independent corners distinguishes genuine
 // volume sampling from a 2D/array substitute. No game shaders or textures.
 static void test_d3d9_volume_renderer() {
@@ -11411,6 +11437,7 @@ int main(int argc, char **argv) {
         }
         test_d3d9_gpu_renderer();
         test_d3d9_volume_renderer();
+        test_d3d9_present_does_not_wait();
         printf("d3d9 GPU: %d checks, %d failures\n", g_checks, g_failures);
         return g_failures ? 1 : 0;
     }

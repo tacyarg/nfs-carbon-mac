@@ -51,7 +51,8 @@ enum : uint32_t {
     TSC = 4096u,    // RDTSC: a clock read on every one before, on every 64th now (cpu.cpp recomp_rdtsc)
     PARAMS = 8192u, // shared effect parameters: sent to the pool on every set before, on change now (d3dx9.cpp)
     RENAME = 16384u, // WebGPU: a buffer rewritten after a draw used it submitted before, gets a new buffer now
-    PRIO = 32768u    // the baton: a holder kept it to its slice's end before, gives it back to the game thread now
+    PRIO = 32768u,   // the baton: a holder kept it to its slice's end before, gives it back to the game thread now
+    PRESENT = 65536u // the game waited for each present before, goes on with one frame in flight now (d3d9_host.cpp)
 };
 inline uint32_t switches() {
     static const uint32_t m = [] {
@@ -91,6 +92,8 @@ inline uint32_t switches() {
             bits |= RENAME;
         if (strstr(e, "prio"))
             bits |= PRIO;
+        if (strstr(e, "present"))
+            bits |= PRESENT;
         return bits;
     }();
     return m;

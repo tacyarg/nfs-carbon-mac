@@ -233,6 +233,39 @@ class RenderThread {
         return f(); // the worker waits on m_ for new work, so it cannot run now
     }
 
+    // `f` runs on the render thread after everything queued before it; the caller goes on.
+    void run_later(std::function<void()> f) {
+        if (!threaded_) {
+            execute(*filling_);
+            filling_->clear();
+            f();
+            return;
+        }
+        Command c{Op::Call};
+        c.call = new std::function<void()>(std::move(f));
+        c.a = 1; // execute deletes it
+        filling_->commands.push_back(c);
+        hand_over();
+    }
+
+    // A frame's present: runs on the render thread while the game makes the next frame. The game
+    // waits only while the previous present has not run (one frame in flight).
+    void present_later(std::function<void()> f) {
+        {
+            std::unique_lock<std::mutex> lock(m_);
+            idle_cv_.wait(lock, [this] { return presented_ == presents_; });
+            ++presents_;
+        }
+        run_later([this, f = std::move(f)] {
+            f();
+            {
+                std::lock_guard<std::mutex> lock(m_);
+                ++presented_;
+            }
+            idle_cv_.notify_all();
+        });
+    }
+
     // The pumped queue: `f` runs on the pumping thread, after everything
     // queued before it, while the caller waits.
     template <class F> auto sync_on_pump(F &&f) -> decltype(f()) {
@@ -435,6 +468,8 @@ class RenderThread {
                 break;
             case Op::Call:
                 (*cmd.call)();
+                if (cmd.a)
+                    delete cmd.call;
                 break;
             }
         }
@@ -454,6 +489,7 @@ class RenderThread {
     std::vector<std::unique_ptr<Batch>> spare_;
     std::unique_ptr<Batch> filling_ = std::make_unique<Batch>();
     bool busy_ = false;
+    uint64_t presents_ = 0, presented_ = 0; // m_
 };
 
 RenderThread *render_thread() {
@@ -722,7 +758,10 @@ void host_d9_present(uint32_t backbuffer, uint32_t width, uint32_t height) {
             g_queue_stats = {};
         }
     }
-    if (RenderThread *t = render_thread())
+    RenderThread *t = render_thread();
+    if (!t)
+        return;
+    if (host_d9_admission_enabled() || recomp_ab::old(recomp_ab::PRESENT))
         t->sync([&] {
             if (host_d9_admission_enabled()) {
                 HostD9Accounting snapshot = admission_totals;
@@ -731,6 +770,8 @@ void host_d9_present(uint32_t backbuffer, uint32_t width, uint32_t height) {
             }
             backend()->present(backbuffer, width, height);
         });
+    else
+        t->present_later([=] { backend()->present(backbuffer, width, height); });
 }
 int host_d9_read_presented(uint8_t *rgb, uint32_t cap, uint32_t *w, uint32_t *h) {
     RenderThread *t = render_thread();
@@ -755,6 +796,14 @@ bool host_d9_use_device_for_test(gpu::Device *device) {
     delete g_test_backend;
     g_test_backend = make_backend(device);
     return g_test_backend != nullptr;
+}
+// Tests: the render thread is busy until *hold is false.
+void host_d9_hold_for_test(std::atomic<bool> *hold) {
+    if (RenderThread *t = render_thread())
+        t->run_later([hold] {
+            while (hold->load())
+                std::this_thread::yield();
+        });
 }
 void host_d9_probe_next_frame(const char *tag) {
     RenderThread *t = render_thread();
