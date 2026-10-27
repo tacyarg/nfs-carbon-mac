@@ -526,6 +526,15 @@ CASES = [
           (0x9, "FNSTSW word ptr [ECX]"), (0xb, "FSTP double ptr [ECX + 0x8]"), (0xe, "RET")],
          "D9 EE  D9 EE  DE F9  9B DB E2  DD 39  DD 59 08  C3",
          lambda rng: {"regs": rand_regs(rng, ECX=SCRATCH + 0x100)}, ignore=((SCRATCH + 0x108, 8),)),
+    # The tag word is classified only when it is saved (x87_tag_word), so it
+    # has to name zero, valid and special (1/0 = infinity) as the hardware does there.
+    Case("FNSTENV saves the zero, valid and special tags of the stack", 0x0D025800,
+         [(0x0, "FLDZ"), (0x2, "FLD1"), (0x4, "FLD1"), (0x6, "FLDZ"), (0x8, "FDIVP ST1,ST0"),
+          (0xa, "FNSTENV [ECX]"), (0xc, "FSTP ST0"), (0xe, "FSTP ST0"), (0x10, "FSTP ST0"),
+          (0x12, "RET")],
+         "D9 EE  D9 E8  D9 E8  D9 EE  DE F9  D9 31  DD D8  DD D8  DD D8  C3",
+         lambda rng: {"regs": rand_regs(rng, ECX=SCRATCH + 0x100)},
+         ignore=((SCRATCH + 0x10c, 16),)),  # instruction and operand pointers: not modelled
     Case("FBSTP stores packed BCD and pops", 0x0D026000,
          [(0x0, "FILD dword ptr [ECX + 0x10]"), (0x3, "FBSTP tword ptr [ECX]"), (0x5, "RET")],
          "DB 41 10  DF 31  C3", fbstp_setup),

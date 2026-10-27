@@ -1165,6 +1165,19 @@ RECOMP_HOT_INLINE void ftag_put(X86 *c, unsigned phys, unsigned tag) {
     unsigned sh = 2u * (phys & 7u);
     c->fpu_tag = (uint16_t)((c->fpu_tag & ~(3u << sh)) | (tag << sh));
 }
+/* fpu_tag only tracks empty against full while code runs: a push marks a slot
+ * valid and arithmetic leaves its tag alone.  The zero/special/valid classes
+ * exist only where a program can see them, the saved tag word, so FNSTENV and
+ * FNSAVE classify the values then.  Classifying on every x87 write cost ~4 %
+ * of the generated code for a word Carbon's exe never reads. */
+static inline uint16_t x87_tag_word(const X86 *c) {
+    unsigned w = 0, phys;
+    for (phys = 0; phys < 8; phys++) {
+        unsigned t = ftag_of(c, phys);
+        w |= (t == FTAG_EMPTY ? FTAG_EMPTY : ftag_classify(c->st[phys])) << (2u * phys);
+    }
+    return (uint16_t)w;
+}
 /* ST(i) is empty (nothing has been pushed into it since the last FINIT). */
 RECOMP_HOT_INLINE unsigned fempty(const X86 *c, unsigned i) {
     return ftag_of(c, (c->fpu_top + i) & 7u) == FTAG_EMPTY;
@@ -1175,7 +1188,7 @@ RECOMP_HOT_INLINE void fpush(X86 *c, double v) {
     c->st[c->fpu_top] = v;
     c->st_bits[c->fpu_top] = 0;
     c->st_exact[c->fpu_top] = 0;
-    ftag_put(c, c->fpu_top, ftag_classify(v));
+    ftag_put(c, c->fpu_top, FTAG_VALID);
 }
 static inline void fpush_int(X86 *c, int64_t v) {
     fpush(c, (double)v);
@@ -1207,16 +1220,13 @@ RECOMP_HOT_INLINE void fdrop(X86 *c) {
     c->fpu_top = (c->fpu_top + 1u) & 7u;
 }
 
-/* Assign ST(i) and retag it.  Every write to an x87 register goes through
- * this, so an arithmetic result that turns out to be zero, a NaN, an infinity
- * or a denormal leaves the tag word describing what the register now holds
- * rather than what it held before. */
+/* Assign ST(i).  The slot is already full (it was an operand), so its tag
+ * stays as it is; the saved tag word classifies the value (x87_tag_word). */
 RECOMP_HOT_INLINE void fset(X86 *c, unsigned i, double v) {
     unsigned phys = (c->fpu_top + i) & 7u;
     c->st[phys] = v;
     c->st_bits[phys] = 0;
     c->st_exact[phys] = 0;
-    ftag_put(c, phys, ftag_classify(v));
 }
 
 /* Register moves preserve the integer representation as well as the tag. */
@@ -1444,7 +1454,7 @@ static inline void x87_finit(X86 *c) {
 static inline void x87_fnstenv(X86 *c, uint32_t a) {
     wr32(a, c->fpu_cw);
     wr32(a + 4, fstsw(c));
-    wr32(a + 8, c->fpu_tag);
+    wr32(a + 8, x87_tag_word(c));
     wr32(a + 12, 0);
     wr32(a + 16, 0);
     wr32(a + 20, 0);
@@ -1466,7 +1476,7 @@ static inline void x87_fnsave(X86 *c, uint32_t a) {
     unsigned i;
     wr32(a, c->fpu_cw);
     wr32(a + 4, fstsw(c));
-    wr32(a + 8, c->fpu_tag);
+    wr32(a + 8, x87_tag_word(c));
     wr32(a + 12, 0);
     wr32(a + 16, 0);
     wr32(a + 20, 0);
