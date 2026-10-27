@@ -45,7 +45,9 @@ enum : uint32_t {
     CONSTS = 64u, // Test75: incremental effect constant binding (d3dx9.cpp bind_constants)
     MIRRORS = 128u, // Test75: per-draw lookups (d3d9.cpp resource mirrors, decoded programs)
     AABB = 256u,    // Test75: native bounding-box routines (native/aabb.cpp)
-    SLICE = 512u    // the baton slice: 1 ms before, RECOMP_SCHED_SLICE_MS now (kernel32.cpp sched_checkpoint)
+    SLICE = 512u,   // the baton slice: 1 ms before, RECOMP_SCHED_SLICE_MS now (kernel32.cpp sched_checkpoint)
+    RING = 1024u,   // WebGPU ring data: a writeBuffer per draw before, one per chunk at submit now (d3d9_webgpu.cpp)
+    GROUPS = 2048u  // WebGPU bind groups: dropped at every submit before, when a texture retires now (d3d9_webgpu.cpp)
 };
 inline uint32_t switches() {
     static const uint32_t m = [] {
@@ -73,6 +75,10 @@ inline uint32_t switches() {
             bits |= AABB;
         if (strstr(e, "slice"))
             bits |= SLICE;
+        if (strstr(e, "ring"))
+            bits |= RING;
+        if (strstr(e, "groups"))
+            bits |= GROUPS;
         return bits;
     }();
     return m;

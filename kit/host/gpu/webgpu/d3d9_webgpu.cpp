@@ -19,6 +19,7 @@
 #include "../../../dx/d3d9_volume.h"
 #include "../../../dx/d3d9_wgsl.h"
 #include "../../../dx/host_d9.h"
+#include "../../../platform/ab_phase.h"
 #include "../../../platform/os.h"
 #include "../../present.h"
 #include "../d3d9_backend.h"
@@ -764,7 +765,7 @@ class WebGpuRenderer final : public D9Backend {
             const uint64_t a = uniform_align_;
             const uint64_t span = round_up(vsize, a) + round_up(sizeof vparams, a) +
                                   round_up(psize, a) + round_up(sizeof pparams, a);
-            uniform_bytes_.assign(span, 0);
+            uniform_bytes_.resize(span); // every range is written below; the gaps are never read
             uint64_t at = 0;
             offsets[0] = (uint32_t)at;
             fill_constants(uniform_bytes_.data() + at, d.vconst, d.vconst_count, vp, vn);
@@ -1083,8 +1084,14 @@ class WebGpuRenderer final : public D9Backend {
             if (r.chunk < r.chunks.size()) {
                 const uint64_t at = round_up(r.used, align);
                 if (at + aligned <= r.chunk_size) {
-                    r.used = at + aligned;
-                    write_padded(r.chunks[r.chunk], at, (const uint8_t *)bytes, size);
+                    r.used = r.ends[r.chunk] = at + aligned;
+                    if (r.direct) {
+                        write_padded(r.chunks[r.chunk], at, (const uint8_t *)bytes, size);
+                    } else {
+                        uint8_t *m = r.cpu[r.chunk].data() + at;
+                        memcpy(m, bytes, size);
+                        memset(m + size, 0, aligned - size);
+                    }
                     *offset = at;
                     return r.chunks[r.chunk];
                 }
@@ -1093,14 +1100,30 @@ class WebGpuRenderer final : public D9Backend {
                 continue;
             }
             r.chunks.push_back(make_buffer(r.chunk_size, usage | WGPUBufferUsage_Index));
+            r.cpu.emplace_back(r.chunk_size);
+            r.ends.push_back(0);
         }
     }
     struct Ring {
         std::vector<WGPUBuffer> chunks;
+        std::vector<std::vector<uint8_t>> cpu; // what the chunk holds this frame
+        std::vector<uint64_t> ends;            // bytes written to each chunk since the last submit
         size_t chunk = 0;
         uint64_t used = 0;
         uint64_t chunk_size = 8u << 20;
+        bool direct = false; // A/B old path: a writeBuffer per ring_write
     };
+    // The frame's ring data goes to the GPU in one write per chunk: each writeBuffer is a
+    // message to the browser's GPU process (Firefox: ~10 us each, 2,500 a frame in a race).
+    void flush_ring(Ring &r) {
+        for (size_t i = 0; i < r.chunks.size(); ++i) {
+            if (r.ends[i] && !r.direct)
+                wgpuQueueWriteBuffer(queue_, r.chunks[i], 0, r.cpu[i].data(), r.ends[i]);
+            r.ends[i] = 0;
+        }
+        r.chunk = r.used = 0;
+        r.direct = recomp_ab::old(recomp_ab::RING); // held for a whole submit
+    }
 
     WFmt format_for(uint32_t fmt) const {
         const FormatInfo f = d9gpu::format_info(fmt, bc_);
@@ -1163,6 +1186,7 @@ class WebGpuRenderer final : public D9Backend {
     }
 
     void retire(Tex &t) {
+        drop_groups();
         if (t.imported) {
             dev_->destroy(t.imported);
             t.imported = {};
@@ -1255,6 +1279,8 @@ class WebGpuRenderer final : public D9Backend {
         WGPUCommandBuffer cb = wgpuCommandEncoderFinish(encoder_, nullptr);
         wgpuCommandEncoderRelease(encoder_);
         encoder_ = nullptr;
+        flush_ring(uniform_ring_);
+        flush_ring(vertex_ring_);
         wgpuQueueSubmit(queue_, 1, &cb);
         wgpuCommandBufferRelease(cb);
         if (readback)
@@ -1262,9 +1288,14 @@ class WebGpuRenderer final : public D9Backend {
         else if (qs)
             wgpuQuerySetRelease(qs);
         query_set_ = nullptr;
-        // The rings are free again once the queue has taken their data.
-        uniform_ring_.chunk = uniform_ring_.used = 0;
-        vertex_ring_.chunk = vertex_ring_.used = 0;
+        // The rings are free again once the queue has taken their data (flush_ring).
+        if (recomp_ab::old(recomp_ab::GROUPS) || groups_.size() > 8192)
+            drop_groups();
+    }
+    // Bind groups live across submits (a race frame has ~9 and reuses ~570 groups). A group's key
+    // holds view handles, which a new view may reuse once one is released, so all go when any
+    // texture retires.
+    void drop_groups() {
         for (auto &kv : groups_)
             wgpuBindGroupRelease(kv.second);
         groups_.clear();
@@ -2053,9 +2084,10 @@ class WebGpuRenderer final : public D9Backend {
 
     void fill_constants(uint8_t *out, const float *c, uint32_t count, const d9sh::Program &p,
                         uint32_t n) {
-        memset(out, 0, (size_t)n * 16);
-        if (c && count)
-            memcpy(out, c, (size_t)std::min(count, n) * 16);
+        const uint32_t given = c ? std::min(count, n) : 0;
+        if (given)
+            memcpy(out, c, (size_t)given * 16);
+        memset(out + (size_t)given * 16, 0, (size_t)(n - given) * 16);
         for (const auto &def : p.defs)
             if (def.first < n)
                 memcpy(out + (size_t)def.first * 16, def.second.data(), 16);
