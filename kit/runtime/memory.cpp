@@ -337,6 +337,30 @@ void drop_block(std::map<uint32_t, Blk>::iterator it) {
     g_blocks->erase(it);
 }
 
+// Memory at or above an arena's mark has never been handed out, so it still reads as zero: heap_reset
+// runs only from mem_init, right after a fresh reservation (zero pages natively, untouched wasm memory on
+// the web). Clearing it again would only dirty pages the game may never touch; a VirtualAlloc reserve of
+// a big pool would cost its whole size at once.
+struct Fresh {
+    uint32_t base, limit, mark;
+};
+Fresh g_fresh[2];
+
+// Clears [a, a+n) where it was handed out before, then raises the mark past it. A range outside both
+// arenas is cleared whole.
+void hand_out(uint32_t a, uint32_t n, bool zero) {
+    for (Fresh &f : g_fresh) {
+        if (a < f.base || a >= f.limit)
+            continue;
+        if (zero && a < f.mark)
+            memset(g_mem + a, 0, std::min(a + n, f.mark) - a);
+        f.mark = std::max(f.mark, a + n);
+        return;
+    }
+    if (zero)
+        memset(g_mem + a, 0, n);
+}
+
 void heap_reset() {
     if (!g_blocks)
         g_blocks = new std::map<uint32_t, Blk>();
@@ -347,6 +371,8 @@ void heap_reset() {
     put_block(HEAP_BASE, HEAP_LIMIT - HEAP_BASE, 0, false);
     if (GUEST_HEAP_EXTRA_SIZE)
         put_block(GUEST_HEAP_EXTRA_BASE, GUEST_HEAP_EXTRA_SIZE, 0, false);
+    g_fresh[0] = {HEAP_BASE, HEAP_LIMIT, HEAP_BASE};
+    g_fresh[1] = {GUEST_HEAP_EXTRA_BASE, GUEST_HEAP_EXTRA_BASE + GUEST_HEAP_EXTRA_SIZE, GUEST_HEAP_EXTRA_BASE};
     g_total_allocs = g_total_frees = 0;
 }
 
@@ -437,8 +463,7 @@ uint32_t heap_alloc(uint32_t size, bool zero, uint32_t align) {
         put_block(user, need, size, true);
         if (tail)
             put_block(user + need, tail, 0, false);
-        if (zero)
-            memset(g_mem + user, 0, need);
+        hand_out(user, need, zero);
         ++g_total_allocs;
         return user;
     }
@@ -555,18 +580,16 @@ uint32_t heap_realloc(uint32_t addr, uint32_t new_size, bool zero) {
         it->second.req = new_size;
         if (tail)
             put_block(addr + need, tail, 0, false);
-        if (zero)
-            memset(g_mem + addr + old_req, 0, new_size - old_req);
+        hand_out(addr + old_req, new_size - old_req, zero);
+        hand_out(addr + new_size, need - new_size, false);
         return addr;
     }
 
-    uint32_t fresh = heap_alloc(new_size, false);
+    uint32_t fresh = heap_alloc(new_size, zero);
     if (!fresh)
         return 0;
     uint32_t copy = old_req < new_size ? old_req : new_size;
     memmove(g_mem + fresh, g_mem + addr, copy);
-    if (zero && new_size > copy)
-        memset(g_mem + fresh + copy, 0, new_size - copy);
     heap_free(addr);
     return fresh;
 }

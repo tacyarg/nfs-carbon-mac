@@ -782,6 +782,19 @@ OsThreadId os_thread_id_of(const OsThread *t) {
     return (OsThreadId)(uintptr_t)t->handle;
 }
 
+#ifdef __EMSCRIPTEN__
+// Emscripten's mmap(MAP_ANON) is memalign plus a memset of the whole length, which on the 2 GB guest arena
+// writes every page at boot (2.5 GB resident before the title). Memory past the break has never been
+// written (wasm grows memory zero-filled and emscripten's dlmalloc never trims), so take it from sbrk.
+void *os_vm_reserve(size_t bytes) {
+    uintptr_t pad = (0 - (uintptr_t)sbrk(0)) & 0xffff; // a 64 KiB wasm page boundary
+    void *p = sbrk((intptr_t)(pad + bytes));
+    return p == (void *)-1 ? nullptr : (uint8_t *)p + pad;
+}
+// ponytail: never handed back, so a second mem_init on the web cannot fit another 2 GB arena under the
+// 4 GB ceiling; boot maps it once (loader_load). Recycle the block if a second mem_init is ever needed.
+void os_vm_release(void *, size_t) {}
+#else
 void *os_vm_reserve(size_t bytes) {
     void *p = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     return p == MAP_FAILED ? nullptr : p;
@@ -789,6 +802,7 @@ void *os_vm_reserve(size_t bytes) {
 void os_vm_release(void *p, size_t bytes) {
     munmap(p, bytes);
 }
+#endif
 
 void *os_dlopen(const char *path) {
     return dlopen(path, RTLD_NOW | RTLD_LOCAL);

@@ -989,6 +989,30 @@ static void test_resumable_stacks() {
     heap_free(stacks);
 }
 
+// The heap never rewrites memory it has not handed out yet. Right after mem_init that memory is fresh
+// (zero pages natively, untouched wasm memory on the web), and clearing it would cost a big VirtualAlloc
+// reserve every page at once. Memory it handed out before is cleared as asked.
+static void test_fresh_heap_memory_is_left_alone() {
+    section("fresh heap memory");
+    mem_init();
+    const uint32_t first = (HEAP_BASE + 4095u) & ~4095u;
+    g_mem[first + 100] = 0x5a; // stands in for a page nobody has touched
+    uint32_t a = heap_alloc(8192, true, 4096);
+    check(a == first, "first fit takes the arena's start %08x (got %08x)", first, a);
+    check(g_mem[first + 100] == 0x5a, "a zeroing allocation of fresh memory does not rewrite it");
+    heap_free(a);
+    uint32_t b = heap_alloc(8192, true, 4096);
+    check(b == first && g_mem[first + 100] == 0, "the same memory handed out again is cleared");
+
+    uint32_t c = heap_alloc(16, true);
+    g_mem[c + 40] = 0x5a; // fresh: past everything handed out so far
+    memset(g_mem + c, 0x11, 16);
+    uint32_t c2 = heap_realloc(c, 64, true);
+    check(c2 == c && g_mem[c + 40] == 0x5a, "growing in place into fresh memory leaves it alone");
+    heap_free(b);
+    heap_free(c2);
+}
+
 static void test_allocator() {
     section("allocator");
     check(heap_check().empty(), "the heap starts consistent with %u used blocks",
@@ -1133,13 +1157,15 @@ static void test_memory_shims_2(X86 *c) {
               g_mem[v1] == 0xcd,
           "MEM_COMMIT over live pages leaves their contents alone");
 
-    // A reservation commits to zeroed pages the first time.
+    // A reservation commits to zeroed pages the first time. The reserve cleared them, so the commit does
+    // not rewrite them: that would dirty pages the game may never touch.
     uint32_t v3 = call_import(c, "KERNEL32.dll", "VirtualAlloc", {0, 8192, 0x2000, 4});
     check(v3 != 0, "VirtualAlloc(MEM_RESERVE) -> %08x", v3);
-    memset(g_mem + v3, 0xee, 8192);
+    check(g_mem[v3] == 0 && g_mem[v3 + 8191] == 0, "a reservation reads as zero");
+    g_mem[v3 + 100] = 0x5a; // stands in for a page nobody has touched
     check(call_import(c, "KERNEL32.dll", "VirtualAlloc", {v3, 8192, 0x1000, 4}) == v3 &&
-              g_mem[v3] == 0,
-          "the first MEM_COMMIT of a reservation zeroes it");
+              g_mem[v3 + 100] == 0x5a,
+          "the first MEM_COMMIT of a reservation does not rewrite it");
     call_import(c, "KERNEL32.dll", "VirtualFree", {v3, 0, 0x8000});
 
     // A release of an interior pointer must fail and must leave the region
@@ -6933,6 +6959,7 @@ int main(int argc, char **argv) {
         return g_failures ? 1 : 0;
     }
 
+    test_fresh_heap_memory_is_left_alone(); // first: it needs a just-mapped arena
     test_loader();
     test_discovery_recorder();
     test_pe_exports();

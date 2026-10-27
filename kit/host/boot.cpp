@@ -466,7 +466,7 @@ bool boot_load(const BootOptions &opts) {
     g_opt = opts;
     g_window_next_ns = g_primary_present_ns = 0;
 
-    mem_init();
+    // loader_load maps the guest arena itself (mem_init) once the image checks out.
     const char *exe = g_opt.exe;
     if (!exe)
         exe = recomp_env("EXE");

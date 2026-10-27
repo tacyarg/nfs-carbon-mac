@@ -736,11 +736,9 @@ void k_VirtualAlloc(X86 *c) {
         auto it = vm_find(addr);
         if (it != vm_regions().end()) {
             if (type & 0x1000) { // MEM_COMMIT
-                if (!it->second.committed) {
-                    // First commit of these pages: they must read as zero.
-                    memset(g_mem + it->first, 0, it->second.size);
-                    it->second.committed = true;
-                }
+                // Uncommitted pages already read as zero (the reserve and a whole decommit clear them), so
+                // the first commit only marks them; rewriting them would dirty pages the game may never touch.
+                it->second.committed = true;
                 // Already committed: the contents stay exactly as they are.
             }
             set_eax(c, addr);
