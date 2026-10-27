@@ -20,9 +20,22 @@ EM_JS(int, web_read_pad, (float *buttons, float *axes), {
             HEAPF32[(buttons >>> 2) + i] = p.buttons[i] ? p.buttons[i].value || (p.buttons[i].pressed ? 1 : 0) : 0;
         for (let i = 0; i < 4; i++)
             HEAPF32[(axes >>> 2) + i] = p.axes[i] || 0;
+        Module.webPad = p.index;
         return 1;
     }
     return 0;
+});
+// Motor levels 0..1 to the pad web_read_pad last read. A pad without an actuator (a handheld's built-in
+// controls on Android) shakes the device instead.
+// ponytail: the device fallback is on/off only; Vibration API has no strength.
+EM_JS(int, web_rumble, (double strong, double weak, int ms), {
+    const p = navigator.getGamepads ? navigator.getGamepads()[Module.webPad] : null;
+    const a = p && p.vibrationActuator;
+    if (a && a.playEffect) {
+        a.playEffect("dual-rumble", { duration: ms, strongMagnitude: strong, weakMagnitude: weak }).catch(() => {});
+        return 1;
+    }
+    return navigator.vibrate ? (navigator.vibrate(strong + weak > 0.2 ? ms : 0) ? 1 : 0) : 0;
 });
 #endif
 
@@ -296,7 +309,11 @@ bool gamepad_connected() {
 }
 
 bool gamepad_rumble(uint16_t low, uint16_t high, uint32_t ms) {
+#ifdef __EMSCRIPTEN__
+    return g_web_pad && web_rumble(low / 65535.0, high / 65535.0, (int)ms);
+#else
     return g_pad && SDL_RumbleGamepad(g_pad, low, high, ms);
+#endif
 }
 
 } // namespace controls
