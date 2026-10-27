@@ -597,6 +597,7 @@ async function start() {
       barFillEl.hidden = true;
       playBtn.disabled = false;
       if (autoplay) play();
+      if (streamed) prefetchBoot();
     },
   };
   window.Module = Module;
@@ -612,6 +613,21 @@ function play() {
   hideLanding();
   canvas.focus();
   window.Module.callMain([`--exe=${window.Module.exe}`]);
+}
+
+// Warms the browser's HTTP cache with the blocks the game reads from Play to the title (boot.json,
+// recorded by kit/tools/record-boot.mjs), at the same addresses the kit's streaming fetch backend
+// uses, so the game's own reads find them already cached. Quiet on any failure: a server without a
+// manifest, a stale boot list or a network hiccup just means this run gets no head start.
+async function prefetchBoot() {
+  try {
+    const [{ bootUrls, prefetch }, manifest, boot] = await Promise.all([
+      import("./boot.js"),
+      fetch("/data-manifest").then((r) => r.json()),
+      fetch("boot.json").then((r) => r.json()),
+    ]);
+    await prefetch(bootUrls(manifest, boot));
+  } catch (e) { console.warn("boot prefetch:", e); }
 }
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
