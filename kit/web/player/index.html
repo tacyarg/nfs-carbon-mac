@@ -177,6 +177,13 @@
   .changes h3 { margin: 10px 0 2px; font: 600 12px/1.4 var(--font-ui); color: var(--text); letter-spacing: 0.5px; text-transform: uppercase; }
   .changes ul { margin: 0; padding-left: 16px; }
   .changes li { margin: 2px 0; }
+  .update {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center;
+    gap: 12px; padding: 6px 6px 6px 16px; border: 1px solid var(--panel-edge); border-radius: 6px;
+    background: rgba(8, 16, 18, 0.96); font: 14px/1.2 var(--font-ui); color: var(--text);
+  }
+  .update[hidden] { display: none; }
+  .update b { color: var(--yellow); }
 
   :focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
   :focus:not(:focus-visible) { outline: none; }
@@ -259,7 +266,10 @@
         <summary><b>v0.4.1</b> &middot; What's new</summary>
         <div>
           <h3>v0.4.1 &middot; Oct 27</h3>
-          <ul><li>The version and this list on the start page.</li></ul>
+          <ul>
+            <li>The version and this list on the start page.</li>
+            <li>A tab left open tells you when a new version is out.</li>
+          </ul>
           <h3>v0.4.0 &middot; Oct 27</h3>
           <ul>
             <li>Plays in Firefox.</li>
@@ -284,10 +294,22 @@
     </footer>
   </div>
 </div>
+<div class="update" id="update" hidden><span>A new version, <b id="update-v"></b>, is out.</span>
+  <button type="button" class="field-btn" id="update-reload">Reload</button></div>
 <script>
 "use strict";
 // The What's new list closes on a click anywhere else, as a menu would.
 document.addEventListener("click", (e) => { const c = document.querySelector(".changes"); if (c.open && !c.contains(e.target)) c.open = false; });
+// A tab left open hears about a release: every 5 minutes the page reads the live page's version (in What's new).
+const pageVersion = document.querySelector(".changes b").textContent;
+async function checkVersion() {
+  const live = (await fetch("./", { cache: "no-store" }).then((r) => r.text()).catch(() => "")).match(/<summary><b>(v[^<]+)<\/b>/);
+  if (!live || live[1] === pageVersion) return;
+  document.getElementById("update-v").textContent = live[1];
+  document.getElementById("update").hidden = false;
+}
+setInterval(checkVersion, 5 * 60 * 1000);
+document.getElementById("update-reload").addEventListener("click", () => location.reload());
 const canvas = document.getElementById("canvas");
 const landing = document.getElementById("landing");
 const lineEl = document.getElementById("line");
