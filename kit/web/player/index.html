@@ -495,6 +495,8 @@ async function start() {
     throw new Error(`${game.title} has not been imported yet.`);
   }
 
+  const { fitBindGroupOffsets } = await import("./gpu.js");
+  fitBindGroupOffsets(self.GPURenderPassEncoder?.prototype, self.GPUComputePassEncoder?.prototype, self.GPURenderBundleEncoder?.prototype);
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
   if (!adapter) throw new Error("WebGPU gave no adapter.");
   const wanted = ["texture-compression-bc", "depth32float-stencil8", "float32-filterable",
