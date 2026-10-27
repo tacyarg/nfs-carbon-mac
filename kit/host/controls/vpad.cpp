@@ -312,4 +312,22 @@ PadState pad_from_sdl(const bool buttons[kSdlPadButtonCount], const int16_t axes
     return p;
 }
 
+void pad_from_standard(const float buttons[kStandardButtonCount], const float axes[kStandardAxisCount],
+                       bool out_buttons[kSdlPadButtonCount], int16_t out_axes[kSdlAxisCount]) {
+    static const int kSdlFor[kStandardButtonCount] = {
+        kSdlPadSouth,  kSdlPadEast,     kSdlPadWest,     kSdlPadNorth,     kSdlPadLeftShoulder, kSdlPadRightShoulder,
+        -1,            -1,              kSdlPadBack,     kSdlPadStart,     kSdlPadLeftStick,    kSdlPadRightStick,
+        kSdlPadDpadUp, kSdlPadDpadDown, kSdlPadDpadLeft, kSdlPadDpadRight, kSdlPadGuide};
+    // !(v > lo) also catches NaN, which a browser should never send.
+    const auto scaled = [](float v, float lo) { return int16_t(!(v > lo) ? lo * 32767 : v > 1 ? 32767 : v * 32767); };
+    std::fill(out_buttons, out_buttons + kSdlPadButtonCount, false);
+    for (int i = 0; i < kStandardButtonCount; ++i)
+        if (kSdlFor[i] >= 0)
+            out_buttons[kSdlFor[i]] = buttons[i] > 0.5f;
+    for (int i = 0; i < kStandardAxisCount; ++i)
+        out_axes[i] = std::isnan(axes[i]) ? 0 : scaled(axes[i], -1);
+    out_axes[kSdlAxisLeftTrigger] = scaled(buttons[6], 0);
+    out_axes[kSdlAxisRightTrigger] = scaled(buttons[7], 0);
+}
+
 } // namespace controls

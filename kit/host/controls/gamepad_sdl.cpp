@@ -6,12 +6,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+
+// The first pad in the Gamepad API's standard places: Chrome on Android puts every controller
+// there whatever it calls the layout, other browsers only a pad marked "standard". 0 when none.
+EM_JS(int, web_read_pad, (float *buttons, float *axes), {
+    const android = navigator.userAgent.includes("Android");
+    for (const p of navigator.getGamepads ? navigator.getGamepads() : []) {
+        if (!p || !p.connected || !(p.mapping === "standard" || android))
+            continue;
+        for (let i = 0; i < 17; i++)
+            HEAPF32[(buttons >>> 2) + i] = p.buttons[i] ? p.buttons[i].value || (p.buttons[i].pressed ? 1 : 0) : 0;
+        for (let i = 0; i < 4; i++)
+            HEAPF32[(axes >>> 2) + i] = p.axes[i] || 0;
+        return 1;
+    }
+    return 0;
+});
+#endif
+
 namespace controls {
 
 namespace {
 
 SDL_Gamepad *g_pad = nullptr;
 SDL_JoystickID g_id = 0;
+bool g_web_pad = false; // the browser's Gamepad API has a pad (web only)
 bool g_buttons[kSdlPadButtonCount] = {};
 int16_t g_axes[kSdlAxisCount] = {};
 
@@ -171,6 +192,22 @@ void gamepad_handle_event(const SDL_Event &e) {
 }
 
 void gamepad_poll() {
+#ifdef __EMSCRIPTEN__
+    // The web reads the page's Gamepad API instead of SDL: SDL's browser driver maps almost no
+    // pad to a gamepad (on Chrome for Android none, as it gets no vendor or product id).
+    float buttons[kStandardButtonCount] = {}, axes[kStandardAxisCount] = {};
+    const bool now = web_read_pad(buttons, axes);
+    if (!now && !g_web_pad)
+        return;
+    pad_from_standard(buttons, axes, g_buttons, g_axes); // all released once the pad is gone
+    publish();
+    if (now != g_web_pad) {
+        g_web_pad = now;
+        vpad().set_controller_connected(now);
+        fprintf(stderr, "[controls] gamepad %s (browser)\n", now ? "connected" : "disconnected");
+    }
+    return;
+#endif
     // A transport change can detach an existing handle while another event
     // consumer drains its removal event. Do not keep polling a dead handle.
     if (g_pad && !SDL_GamepadConnected(g_pad))
@@ -255,7 +292,7 @@ int gamepad_menu_key(const SDL_Event &e, bool *down) {
 }
 
 bool gamepad_connected() {
-    return g_pad != nullptr;
+    return g_pad != nullptr || g_web_pad;
 }
 
 bool gamepad_rumble(uint16_t low, uint16_t high, uint32_t ms) {

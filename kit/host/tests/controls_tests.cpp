@@ -2706,6 +2706,52 @@ static_assert(int(kSdlAxisLeftX) == int(SDL_GAMEPAD_AXIS_LEFTX) &&
               int(kSdlAxisRightTrigger) == int(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) &&
               int(kSdlAxisCount) == int(SDL_GAMEPAD_AXIS_COUNT));
 
+// The browser's Gamepad API lays a pad out in its standard places (w3c.github.io/gamepad/#remapping);
+// pad_from_standard moves them to SDL's, so the web feeds pad_from_sdl as the native host does.
+static void test_pad_from_standard() {
+    float buttons[kStandardButtonCount] = {};
+    const float centred[kStandardAxisCount] = {};
+    bool b[kSdlPadButtonCount];
+    int16_t a[kSdlAxisCount];
+    pad_from_standard(buttons, centred, b, a);
+    for (bool x : b)
+        CHECK(!x);
+    for (int16_t x : a)
+        CHECK(x == 0);
+
+    // Each standard button lights exactly its SDL slot; 6 and 7, the analog triggers, light none.
+    const int sdl[kStandardButtonCount] = {
+        kSdlPadSouth, kSdlPadEast,       kSdlPadWest,        kSdlPadNorth,     kSdlPadLeftShoulder, kSdlPadRightShoulder,
+        -1,           -1,                kSdlPadBack,        kSdlPadStart,     kSdlPadLeftStick,    kSdlPadRightStick,
+        kSdlPadDpadUp, kSdlPadDpadDown,  kSdlPadDpadLeft,    kSdlPadDpadRight, kSdlPadGuide};
+    for (int i = 0; i < kStandardButtonCount; ++i) {
+        float one[kStandardButtonCount] = {};
+        one[i] = 1.0f;
+        pad_from_standard(one, centred, b, a);
+        int lit = 0;
+        for (bool x : b)
+            lit += x;
+        CHECK(lit == (sdl[i] >= 0 ? 1 : 0));
+        CHECK(sdl[i] < 0 || b[sdl[i]]);
+    }
+    buttons[0] = 0.4f; // half way down is not a press yet
+    pad_from_standard(buttons, centred, b, a);
+    CHECK(!b[kSdlPadSouth]);
+    buttons[0] = 0.0f;
+
+    // Sticks scale to SDL's range (its +y is down, as the browser's), clamped; NaN reads centred.
+    const float sticks[kStandardAxisCount] = {0.5f, -2.0f, 1.0f, NAN};
+    pad_from_standard(buttons, sticks, b, a);
+    CHECK(a[kSdlAxisLeftX] == 16383 && a[kSdlAxisLeftY] == -32767);
+    CHECK(a[kSdlAxisRightX] == 32767 && a[kSdlAxisRightY] == 0);
+
+    // The triggers are analog buttons 6 and 7 in the browser and axes in SDL.
+    buttons[6] = 1.0f;
+    buttons[7] = 0.25f;
+    pad_from_standard(buttons, centred, b, a);
+    CHECK(a[kSdlAxisLeftTrigger] == 32767 && a[kSdlAxisRightTrigger] == 8191);
+}
+
 // SDL's standard mapping onto the pad: face buttons by position, the
 // dpad onto the hat, sticks scaled with a small radial dead zone, and
 // triggers scaled with the l2/r2 bit past half travel.
@@ -4306,6 +4352,7 @@ int main(int argc, char **argv) {
     test_layer_revisions_are_per_group();
     test_small_key_label_fits();
     test_pad_from_sdl();
+    test_pad_from_standard();
     test_layout_wanted_truth_table();
     test_layout_content();
     test_router_toggles_only();

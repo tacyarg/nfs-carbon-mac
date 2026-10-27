@@ -188,4 +188,13 @@ enum SdlPadAxis : int {
 // to [0, 1], and past 0.5 also set the l2/r2 bit.
 PadState pad_from_sdl(const bool buttons[kSdlPadButtonCount], const int16_t axes[kSdlAxisCount]);
 
+// The Gamepad API's standard layout (w3c.github.io/gamepad/#remapping): 17 buttons, the
+// analog triggers at 6 and 7, and four stick axes in [-1, 1] with +y down.
+enum : int { kStandardButtonCount = 17, kStandardAxisCount = 4 };
+
+// Moves a standard-layout pad to SDL's places for pad_from_sdl: a button past 0.5 is pressed,
+// sticks scale to +-32767 (NaN reads centred), and buttons 6 and 7 become SDL's trigger axes.
+void pad_from_standard(const float buttons[kStandardButtonCount], const float axes[kStandardAxisCount],
+                       bool out_buttons[kSdlPadButtonCount], int16_t out_axes[kSdlAxisCount]);
+
 } // namespace controls

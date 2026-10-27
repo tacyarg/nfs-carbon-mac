@@ -1951,6 +1951,8 @@ int web_main(int argc, char **argv) {
         fprintf(stderr, RECOMP_APP_NAME ": SDL_Init failed: %s\n", SDL_GetError());
         return 3;
     }
+    // While the settings page is up it owns the pad; the game sees nothing held.
+    controls::gamepad_set_suppressed_query([] { return mods_page_visible(); });
     g_gpu = gpu::create_default_device();
     if (!g_gpu) {
         fprintf(stderr, RECOMP_APP_NAME ": this browser gave the page no WebGPU device\n");
