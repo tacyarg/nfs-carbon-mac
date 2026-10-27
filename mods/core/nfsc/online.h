@@ -136,7 +136,29 @@ static void online_first_alias(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInv
     api->hook_return(api, cpu, cpu->eax, 0);
 }
 
+/* "Save complete." and "Load complete." continue by themselves. Realmemcard's OnMessage auto-answers any
+   message kind whose bit is set in its filter (the game sets the Save complete bit itself for autosaves);
+   this sets the bit for those two kinds around the original call, so it answers Continue and shows nothing.
+   Errors and questions are other kinds with other bits and still show.
+   Trace: planning/research/2026-10-27-memcard-complete-skip.md. */
+#define RMC_ON_MESSAGE 0x00894d80u /* impl::OnMessage(req), thiscall, RET 4; kind (a string id) at req+0xc */
+#define RMC_FILTER 0x7cu           /* impl+0x7c */
+
+static void online_auto_complete(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocation *inv, void *user) {
+    (void)inv;
+    (void)user;
+    const uint32_t impl = cpu->ecx, kind = get_u32(get_u32(cpu->esp + 4) + 0xc), old = get_u32(impl + RMC_FILTER);
+    const uint32_t bit = kind == 8 ? 0x400u : kind == 10 ? 0x4000u : 0; /* Save complete. / Load complete. */
+    if (bit)
+        api->guest_write_u32(api, impl + RMC_FILTER, old | bit);
+    api->call_original(api, cpu->target, cpu); /* with the bit set it never calls the UI, so old is current */
+    if (bit)
+        api->guest_write_u32(api, impl + RMC_FILTER, old);
+}
+
 static void online_install(void) {
+    if (install(RMC_ON_MESSAGE, online_auto_complete, POP_HOOK_REPLACE, 26) == POP_OK)
+        log_line("core.nfsc: \"Save complete.\" and \"Load complete.\" continue by themselves");
     if (setting("fesl_plain", 0) && install(FESL_SET_SECURE, online_fesl_set_secure, POP_HOOK_REPLACE, 24) == POP_OK)
         log_line("core.nfsc: FESL set to plain TCP (DirtySock secure flag kept off)");
     if (getenv("RECOMP_ONLINE_NAME") && install(LOGIN_FLOW_CREATE, online_login_flow, POP_HOOK_REPLACE, 25) == POP_OK)
