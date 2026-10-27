@@ -55,6 +55,6 @@ static void mix_scale(const PopModApi *api, pop_cpu_v1 *cpu, PopHookInvocation *
 
 static void mix_install(void) {
     if (install(MIX_ADD, mix_add, POP_HOOK_REPLACE, 14) != POP_OK ||
-        install(MIX_SCALE, mix_scale, POP_HOOK_REPLACE, 16) != POP_OK)
+        install(MIX_SCALE, mix_scale, POP_HOOK_REPLACE, 27) != POP_OK)
         log_line("core.nfsc: native mixer unavailable, the game's own loops run");
 }
