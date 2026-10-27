@@ -44,7 +44,8 @@ enum : uint32_t {
     AUDIO = 32u,
     CONSTS = 64u, // Test75: incremental effect constant binding (d3dx9.cpp bind_constants)
     MIRRORS = 128u, // Test75: per-draw lookups (d3d9.cpp resource mirrors, decoded programs)
-    AABB = 256u     // Test75: native bounding-box routines (native/aabb.cpp)
+    AABB = 256u,    // Test75: native bounding-box routines (native/aabb.cpp)
+    SLICE = 512u    // the baton slice: 1 ms before, RECOMP_SCHED_SLICE_MS now (kernel32.cpp sched_checkpoint)
 };
 inline uint32_t switches() {
     static const uint32_t m = [] {
@@ -70,6 +71,8 @@ inline uint32_t switches() {
             bits |= MIRRORS;
         if (strstr(e, "aabb"))
             bits |= AABB;
+        if (strstr(e, "slice"))
+            bits |= SLICE;
         return bits;
     }();
     return m;

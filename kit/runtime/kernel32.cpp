@@ -3088,8 +3088,14 @@ void sched_checkpoint() {
     if (threads().size() < 2 || t_atomic)
         return;
     GuestThread *me = threads()[t_self];
+    // The game thread handed the baton over every 1 ms: two worker wakes per hand-over, ~24 a frame,
+    // 6.2 ms of a 24 ms race frame away from the game. A thread that blocks still hands it over at once.
+    static const double slice = [] {
+        const char *e = recomp_env("SCHED_SLICE_MS");
+        return e ? atof(e) / 1000.0 : 0.004;
+    }();
     double now = sched_now();
-    if (now - me->last_yield < SCHED_SLICE_SECONDS)
+    if (now - me->last_yield < (recomp_ab::old(recomp_ab::SLICE) ? SCHED_SLICE_SECONDS : slice))
         return;
     me->last_yield = now;
     guest_yield();
