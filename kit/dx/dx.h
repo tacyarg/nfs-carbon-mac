@@ -60,6 +60,7 @@ void ddraw_reset();
 void d3d_reset();
 void d3d9_reset();
 void d3dx9_reset();
+uint64_t d3dx9_shared_copies_for_test(); // shared parameter values copied into an effect
 void dsound_reset();
 void dshow_reset();
 void dinput_reset();

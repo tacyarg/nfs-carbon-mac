@@ -742,6 +742,31 @@ static void test_effect_pool_sharing(uint32_t dev) {
     call_method(pool, 2);
 }
 
+// A shared value reaches an effect when that effect is next used, not on every set: a game that sets
+// a matrix per draw must not copy it into every other effect of the pool each time.
+static void test_effect_pool_lazy(uint32_t dev) {
+    CHECK(call_shim(tramp("d3dx9_26.dll", "D3DXCreateEffectPool"), {sc(0)}) == 0);
+    const uint32_t pool = rd32(sc(0));
+    const auto fx = effect(true);
+    const uint32_t a = effect_from_resource(dev, fx, pool), b = effect_from_resource(dev, fx, pool),
+                   c = effect_from_resource(dev, fx, pool);
+    memcpy(gm_ptr(sc(0x200)), "Many", 5);
+    const uint32_t ma = call_method(a, 9, {0, sc(0x200)}), mb = call_method(b, 9, {0, sc(0x200)});
+    const uint64_t before = d3dx9_shared_copies_for_test();
+    for (uint32_t i = 0; i < 50; ++i) {
+        wr32(sc(0x240), i & 1);
+        wr32(sc(0x244), ~i & 1);
+        CHECK(call_method(a, 24, {ma, sc(0x240), 2}) == 0); // SetBoolArray
+    }
+    CHECK(call_method(b, 25, {mb, sc(0x250), 2}) == 0); // GetBoolArray: b catches up once
+    CHECK(rd32(sc(0x250)) == 1 && rd32(sc(0x254)) == 0);
+    CHECK(d3dx9_shared_copies_for_test() - before <= 1);
+    call_method(a, 2);
+    call_method(b, 2);
+    call_method(c, 2);
+    call_method(pool, 2);
+}
+
 static void test_effect_booleans(uint32_t dev) {
     const uint32_t e = effect_from_resource(dev, effect(), 0);
     CHECK(e != 0);
@@ -876,6 +901,7 @@ int main() {
     test_surface_container_refs(dev);
     test_effect_booleans(dev);
     test_effect_pool_sharing(dev);
+    test_effect_pool_lazy(dev);
     test_volume(dev);
     test_state_getters_and_readback(dev);
     const uint32_t bound = make_volume(dev);

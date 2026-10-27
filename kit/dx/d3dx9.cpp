@@ -352,6 +352,7 @@ struct FxState {
                                  : 0;
     }
 };
+struct PoolSlot;
 struct FxParam {
     FxType t;
     std::vector<uint8_t> value;
@@ -360,11 +361,8 @@ struct FxParam {
     uint32_t guest_name = 0, guest_semantic = 0;
     std::vector<uint32_t> annotations; // indices into FxEffect::annotations
     bool shared = false;               // D3DX_PARAMETER_SHARED: one value across the effect pool
-    // A shared parameter's value as last sent to or received from the pool. A setter that leaves the
-    // value equal to it has nothing to send: every peer holds it too (share_parameter).
-    std::vector<uint8_t> synced;
-    uint32_t synced_texture = 0;
-    bool is_synced = false;
+    PoolSlot *slot = nullptr;          // its value in the pool (join_pool), if shared
+    uint64_t seen = 0;                 // the slot's stamp this copy holds
     uint64_t stamp = 0;                // g_param_stamp at the last write
     // Test71: a sampler's texture parameter, resolved once per (parameter count, stamp) instead of a
     // string-keyed lookup on every CommitChanges (-2: not resolved yet, -1: none).
@@ -423,10 +421,8 @@ struct FxEffect {
         const void *table = nullptr;    // const std::vector<CtabConst> *
         std::vector<int32_t> *resolved = nullptr;
     } ctab_last[2];
-    // Shared parameters: for each parameter index, the same parameter in the
-    // other effects of the pool, valid while pool_generation matches.
-    std::unordered_map<uint32_t, std::vector<struct FxParam *>> peers;
-    uint64_t peers_generation = 0;
+    std::vector<uint32_t> shared; // indices of the parameters with a pool slot
+    uint64_t pulled = 0;          // g_shared_stamp when it last caught up with its pool
 };
 // Changes whenever an effect is created or destroyed.
 static uint64_t g_effect_generation = 1;
@@ -680,6 +676,12 @@ static bool find_rcdata(uint32_t module, uint32_t name_arg, uint32_t *addr, uint
 static const uint32_t H_PARAM = 0xF1000000u, H_TECH = 0xF2000000u, H_PASS = 0xF3000000u,
                       H_ANNOT = 0xF4000000u;
 
+static uint64_t g_shared_stamp = 1; // bumped by every value sent to a pool
+static void pull_shared_slow(FxEffect &fx);
+static inline void pull_shared(FxEffect *fx) {
+    if (fx && fx->pulled != g_shared_stamp)
+        pull_shared_slow(*fx);
+}
 static FxEffect *this_fx(X86 *c) {
     ComObj *o = com_this_arg(c);
     if (!o || o->kind != K_D3DXEFFECT)
@@ -688,12 +690,13 @@ static FxEffect *this_fx(X86 *c) {
     static thread_local uint32_t last_id = 0;
     static thread_local uint64_t last_generation = 0;
     static thread_local FxEffect *last = nullptr;
-    if (last && last_id == o->id && last_generation == g_effect_generation)
-        return last;
-    auto it = effects().find(o->id);
-    last = it == effects().end() ? nullptr : &it->second;
-    last_id = o->id;
-    last_generation = g_effect_generation;
+    if (!(last && last_id == o->id && last_generation == g_effect_generation)) {
+        auto it = effects().find(o->id);
+        last = it == effects().end() ? nullptr : &it->second;
+        last_id = o->id;
+        last_generation = g_effect_generation;
+    }
+    pull_shared(last); // every effect method comes here: the pool's newer values first
     return last;
 }
 
@@ -2023,14 +2026,30 @@ void Fx_GetDevice(X86 *c) {
 }
 
 // Point a parameter at a texture, moving the reference it holds.
-static void set_param_texture(FxParam &p, uint32_t id) {
-    if (p.texture == id)
+static void hold_texture(uint32_t &held, uint32_t id) {
+    if (held == id)
         return;
     if (ComObj *tex = com_get(id))
         com_addref(tex);
-    if (ComObj *old = com_get(p.texture))
+    if (ComObj *old = com_get(held))
         com_release(old);
-    p.texture = id;
+    held = id;
+}
+static void set_param_texture(FxParam &p, uint32_t id) {
+    hold_texture(p.texture, id);
+}
+
+// A shared parameter's one value in its pool. A setter stores it here once (share_parameter);
+// each other effect of the pool copies it in when it is next used (pull_shared, from this_fx),
+// instead of every set copying it into every effect. It lasts until the pool's last effect goes.
+struct PoolSlot {
+    std::vector<uint8_t> value;
+    uint32_t texture = 0; // holds its own reference
+    uint64_t stamp = 0;   // g_shared_stamp when it was last set
+};
+static std::map<std::pair<uint32_t, std::string>, PoolSlot> &pool_slots() {
+    static std::map<std::pair<uint32_t, std::string>, PoolSlot> slots;
+    return slots;
 }
 
 static void fx_destroy(ComObj *o) {
@@ -2040,107 +2059,88 @@ static void fx_destroy(ComObj *o) {
     for (FxParam &p : it->second.params)
         if (ComObj *tex = com_get(p.texture))
             com_release(tex);
+    const uint32_t pool = it->second.pool;
     effects().erase(it);
     ++g_effect_generation;
+    if (!pool || std::any_of(effects().begin(), effects().end(),
+                             [&](const auto &kv) { return kv.second.pool == pool; }))
+        return;
+    auto &slots = pool_slots();
+    for (auto sl = slots.lower_bound({pool, std::string()}); sl != slots.end() && sl->first.first == pool;) {
+        if (ComObj *tex = com_get(sl->second.texture))
+            com_release(tex);
+        sl = slots.erase(sl);
+    }
 }
 
 // ---- Shared parameters ------------------------------------------------------
 // A parameter marked shared has one value across every effect created with
 // the same pool: the game sets COLORWRITEMODE or BLENDSTATE through whichever
 // effect is at hand and every other effect's passes read it.
-static void share_parameter(uint32_t from_effect, uint32_t index) {
-    auto src = effects().find(from_effect);
-    if (src == effects().end() || !src->second.pool || index >= src->second.params.size())
-        return;
-    FxEffect &fx = src->second;
-    FxParam &value = fx.params[index];
-    if (!value.shared)
-        return;
-    if (fx.peers_generation != g_effect_generation) {
-        fx.peers.clear();
-        fx.peers_generation = g_effect_generation;
-    }
-    // The same parameter in the pool's other effects, by address: effects
-    // live in map nodes, their parameter vectors do not change size, and the
-    // list is rebuilt whenever an effect comes or goes.
-    auto found = fx.peers.find(index);
-    if (found == fx.peers.end()) {
-        std::vector<FxParam *> list;
-        for (auto &kv : effects()) {
-            if (kv.first == from_effect || kv.second.pool != fx.pool)
-                continue;
-            int32_t j = param_index_of(kv.second, value.t.name);
-            if (j >= 0 && kv.second.params[(size_t)j].shared &&
-                kv.second.params[(size_t)j].value.size() == value.value.size())
-                list.push_back(&kv.second.params[(size_t)j]);
-        }
-        found = fx.peers.emplace(index, std::move(list)).first;
-    }
-    const size_t n = value.value.size();
-    for (FxParam *other : found->second) {
-        if (other->texture == value.texture &&
-            (n == 0 || memcmp(other->value.data(), value.value.data(), n) == 0))
+static uint64_t g_shared_copies = 0; // tests: values copied into an effect from its pool
+static void pull_shared_slow(FxEffect &fx) {
+    fx.pulled = g_shared_stamp;
+    for (uint32_t i : fx.shared) {
+        FxParam &p = fx.params[i];
+        const PoolSlot &sl = *p.slot;
+        if (p.seen == sl.stamp)
+            continue;
+        p.seen = sl.stamp;
+        const size_t n = sl.value.size();
+        if (p.texture == sl.texture && (n == 0 || memcmp(p.value.data(), sl.value.data(), n) == 0))
             continue;
         if (n)
-            memcpy(other->value.data(), value.value.data(), n);
-        // Each effect's copy holds its own reference: fx_destroy releases
-        // every parameter's texture, so an unreferenced copy over-released
-        // the shared texture once per peer effect destroyed. NFSC's race
-        // load freed its colour-grading volume this way (black 3D).
-        set_param_texture(*other, value.texture);
-        param_touched(*other);
+            memcpy(p.value.data(), sl.value.data(), n);
+        // Each effect's copy holds its own reference: fx_destroy releases every parameter's texture,
+        // so an unreferenced copy over-released the shared texture once per effect destroyed. NFSC's
+        // race load freed its colour-grading volume this way (black 3D).
+        set_param_texture(p, sl.texture);
+        param_touched(p);
+        ++g_shared_copies;
     }
-    // Stamped on every peer, not only the sender: a peer that later sets back the value it last
-    // sent must still send it, because the pool has moved on since.
-    for (FxParam *p : found->second) {
-        p->synced = value.value;
-        p->synced_texture = value.texture;
-        p->is_synced = true;
-    }
-    value.synced = value.value;
-    value.synced_texture = value.texture;
-    value.is_synced = true;
 }
-// A new effect starts from the pool's current value of each shared parameter.
+static void share_parameter(FxParam &p) {
+    PoolSlot &sl = *p.slot;
+    sl.value = p.value;
+    hold_texture(sl.texture, p.texture);
+    sl.stamp = ++g_shared_stamp;
+    p.seen = sl.stamp;
+}
+// A new effect starts from the pool's current value of each shared parameter; the first effect
+// with a parameter gives the pool its value.
 static void join_pool(uint32_t effect_id) {
     FxEffect &fx = effects()[effect_id];
     if (!fx.pool)
         return;
-    for (FxParam &p : fx.params) {
+    for (size_t i = 0; i < fx.params.size(); ++i) {
+        FxParam &p = fx.params[i];
         if (!p.shared)
             continue;
-        for (auto &kv : effects()) {
-            if (kv.first == effect_id || kv.second.pool != fx.pool)
-                continue;
-            const FxParam *other = param_named(kv.second, p.t.name);
-            if (other && other->shared && other->value.size() == p.value.size()) {
-                p.value = other->value;
-                set_param_texture(p, other->texture);
-                param_touched(p);
-                break;
-            }
+        PoolSlot &sl = pool_slots()[{fx.pool, p.t.name}];
+        if (!sl.stamp) {
+            sl.value = p.value;
+            hold_texture(sl.texture, p.texture);
+            sl.stamp = ++g_shared_stamp;
+        } else if (sl.value.size() != p.value.size()) {
+            continue; // another shape under the same name: not shared with it
         }
+        p.slot = &sl;
+        fx.shared.push_back((uint32_t)i);
     }
+    pull_shared(&fx);
 }
 // Wraps a setter: after it runs, a shared parameter's new value reaches the pool.
 template <void (*F)(X86 *)> void shared_setter(X86 *c) {
-    ComObj *o = com_this_arg(c);
-    uint32_t id = o ? o->id : 0;
-    uint32_t handle = arg(c, 1);
-    int64_t index = -1;
     FxParam *shared = nullptr; // stays valid across F: an effect's parameter vector never resizes
     if (FxEffect *fx = this_fx(c))
-        if (FxParam *p = param_of(*fx, handle);
-            p && p->shared && p >= fx->params.data() && p < fx->params.data() + fx->params.size()) {
-            index = p - fx->params.data();
+        if (FxParam *p = param_of(*fx, arg(c, 1));
+            p && p->slot && p >= fx->params.data() && p < fx->params.data() + fx->params.size())
             shared = p;
-        }
     F(c);
     // The game sets the same matrices every draw; sharing them again cost ~27 ms/s in a race.
-    if (index >= 0 && (recomp_ab::old(recomp_ab::PARAMS) ||
-                       !(shared->is_synced && shared->synced_texture == shared->texture &&
-                         shared->synced == shared->value)))
-        share_parameter(id, (uint32_t)index);
+    if (shared && (recomp_ab::old(recomp_ab::PARAMS) || shared->texture != shared->slot->texture ||
+                   shared->value != shared->slot->value))
+        share_parameter(*shared);
 }
 
 static const ComMethod g_effect_pool[] = {
@@ -2405,6 +2405,10 @@ static const ImportShim g_d3dx9_exports[] = {
 
 void d3dx9_reset() {
     effects().clear();
+    pool_slots().clear();
+}
+uint64_t d3dx9_shared_copies_for_test() {
+    return g_shared_copies;
 }
 
 void d3dx9_register() {
