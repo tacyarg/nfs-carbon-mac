@@ -291,6 +291,9 @@ if(TARGET recomp_gen)
          ${POP_ROOT}/web/player/zip.js ${POP_ROOT}/web/player/vault.js
          ${POP_ROOT}/web/player/boot.js ${POP_ROOT}/web/player/boot.json
          ${POP_ROOT}/web/player/gpu.js DESTINATION ${POP_OUT})
+    # Function names but no DWARF in the module players download: DWARF was 395 MB of its 526 MB.
+    # Only -g0 undoes the Release -g (a later -g2 keeps DWARF), and it drops names too.
+    target_link_options(recomp_app PRIVATE -g0 --profiling-funcs)
     target_link_options(recomp_app PRIVATE
       -pthread -sPTHREAD_POOL_SIZE=24 -sWASMFS
       -sINITIAL_MEMORY=1073741824 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4294967296
