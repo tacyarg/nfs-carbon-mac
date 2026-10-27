@@ -82,7 +82,7 @@ POP_MOD_DECLARE_ABI();
 #define HUD_RIGHT_GROUP 0x5D0101F1u
 
 static const PopModApi *g_api;
-static uint32_t g_hooks[29];
+static uint32_t g_hooks[30];
 static int g_widescreen = 1;
 static int g_scaling = 1;
 static uint32_t g_w = 1280, g_h = 720;
@@ -127,6 +127,7 @@ static void log_line(const char *text) {
 #include "cheats.h" /* infinite nitrous and speedbreaker */
 #include "mix.h" /* the sound mixer's inner loops, natively */
 #include "bench.h" /* RECOMP_BENCH: the game flow's states on the log */
+#include "detail.h" /* the game's detail settings: logged, RECOMP_SETTING_gfx overrides */
 
 /* ---- the resolution list --------------------------------------------------
  * The host scales the frame smoothly to the window, aspect kept (game.toml
@@ -517,6 +518,7 @@ PopModStatus pop_mod_init(const PopModApi *api) {
     cheats_install();
     mix_install();
     bench_install();
+    detail_install();
     PopModStatus s = install(SETUP_PROJECTION, setup_projection, POP_HOOK_BEFORE, 0);
     if (s != POP_OK)
         return s;
