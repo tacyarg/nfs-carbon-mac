@@ -1784,18 +1784,26 @@ void k_InitializeCriticalSection(X86 *c) {
     }
     set_eax(c, 0);
 }
+// Entries this thread holds, recursive ones included: a thread holding a section is never cut off for the
+// waiting game thread (Test79), or the game thread blocks on that section next (priority inversion).
+__thread uint32_t t_critsecs = 0;
 void k_EnterCriticalSection(X86 *c) {
     imports_call_leaves_surfaces();
     sched_enter_critsec(arg(c, 0));
+    ++t_critsecs;
     set_eax(c, 0);
 }
 void k_TryEnterCriticalSection(X86 *c) {
     imports_call_leaves_surfaces();
-    set_eax(c, sched_try_critsec(arg(c, 0)) ? 1 : 0);
+    const bool got = sched_try_critsec(arg(c, 0));
+    t_critsecs += got;
+    set_eax(c, got ? 1 : 0);
 }
 void k_LeaveCriticalSection(X86 *c) {
     imports_call_leaves_surfaces();
     sched_leave_critsec(arg(c, 0));
+    if (t_critsecs)
+        --t_critsecs;
     set_eax(c, 0);
 }
 void k_DeleteCriticalSection(X86 *c) {
@@ -2391,6 +2399,12 @@ uint32_t g_handoff_count = 0;
 // logged every 30 s by the main thread (guest_block).
 uint64_t g_hold_ns[32];
 double g_hold_since = 0.0;
+// Test79: the game thread yielded at its slice and waits for the baton; whoever holds it gives it back 1 ms
+// after getting it (g_baton_since, the last hand-off), and it goes to the game thread first. The holder kept
+// it for its own 4 ms slice before, checked on every 128th call only, so the sound thread's bursts held the
+// game thread 10-35 ms at a time: frames of 35-60 ms in a race. The sound thread's time is unchanged, cut
+// into shorter pieces.
+std::atomic<double> g_baton_since{0.0};
 // CPU each guest thread burns running guest code (from its return from a block to its
 // next block), per guest thread id; logged with the hold times.
 std::atomic<uint64_t> g_run_cpu_ns[32];
@@ -2402,6 +2416,7 @@ void record_handoff_locked(size_t from, size_t to, const char *why) {
     if (g_hold_since > 0.0 && from < threads().size() && now > g_hold_since)
         g_hold_ns[threads()[from]->id % 32] += uint64_t((now - g_hold_since) * 1e9);
     g_hold_since = now;
+    g_baton_since.store(now, std::memory_order_relaxed);
 }
 
 const char *wait_kind_name(WaitKind k) {
@@ -2635,6 +2650,8 @@ void sched_expire_locked() {
 
 // Caller holds g_sched_m.  The next runnable thread after `from`, or NO_THREAD.
 size_t sched_next_runnable_locked(size_t from) {
+    if (from != 0 && recomp_preempt_wanted && thread_runnable(threads()[0]))
+        return 0; // the game thread, waiting after its slice (Test79)
     size_t n = threads().size();
     for (size_t k = 1; k <= n; ++k) {
         size_t i = (from + k) % n;
@@ -2947,9 +2964,12 @@ bool guest_yield() {
         g_baton = next;
         record_handoff_locked(me->index, next, "yield");
         g_sched_cv.notify_all();
+        if (me->is_main && !recomp_ab::old(recomp_ab::PRIO))
+            recomp_preempt_wanted = 1;
         while (g_baton != me->index)
             sched_wait_locked(me->index, 0.0, HOST_IDLE_BATON_SLICE);
         if (me->is_main) {
+            recomp_preempt_wanted = 0;
             const uint64_t ns = sched_seconds_ns(sched_now() - away);
             g_main_yield_ns.fetch_add(ns, std::memory_order_relaxed);
             main_starve_max(ns);
@@ -3058,6 +3078,19 @@ void sched_atomic_unwind_to_esp(uint32_t esp) {
         --t_atomic;
 }
 
+// The entry check of lifted functions (x86.h RECOMP_PREEMPT, Test79): the baton holder gives it back to the
+// waiting game thread 1 ms after getting it, the clock read on every 64th check only. A thread without the
+// baton (a host thread running guest code) or inside an atomic stretch never yields here.
+extern "C" volatile uint8_t recomp_preempt_wanted = 0;
+extern "C" void recomp_preempt(void) {
+    static uint32_t checks = 0; // ponytail: shared by all threads, racy; it only spaces clock reads, so a lost
+                                // count shifts one read. Make it __thread if a lost count ever matters.
+    if ((++checks & 63) != 0 || t_atomic || t_critsecs || g_baton != t_self)
+        return;
+    if (sched_now() - g_baton_since.load(std::memory_order_relaxed) >= 0.001)
+        guest_yield();
+}
+
 void sched_checkpoint() {
     // Drain first and unconditionally: a guest with no worker threads never
     // reaches the scheduler proper, and a signal it never applied is a wait
@@ -3084,6 +3117,12 @@ void sched_checkpoint() {
     static std::atomic<uint32_t> calls{0};
     const uint32_t n = calls.load(std::memory_order_relaxed) + 1;
     calls.store(n, std::memory_order_relaxed);
+    if (recomp_preempt_wanted) { // the game thread waits: give it back soon (Test79)
+        if ((n & 7) == 0 && !t_atomic && !t_critsecs &&
+            sched_now() - g_baton_since.load(std::memory_order_relaxed) >= 0.001)
+            guest_yield();
+        return;
+    }
     if ((n & (recomp_ab::old(recomp_ab::STRIDE) ? 15u : stride_mask)) != 0)
         return;
     if (threads().size() < 2 || t_atomic)

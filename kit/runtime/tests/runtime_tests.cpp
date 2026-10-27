@@ -2962,6 +2962,26 @@ static void fake_pointer_handoff_thread(X86 *c) {
     set_eax(c, 0);
 }
 
+// A worker that keeps the baton busy the way the game's sound thread decodes: 10 ms stretches of its own code,
+// passing function entries (RECOMP_PREEMPT, what translate.py puts in a lifted function that calls others)
+// but no import, then one import call.
+// With g_busy_cs set, each stretch runs inside that critical section.
+static volatile uint32_t g_busy_stop = 0, g_busy_calls = 0, g_busy_cs = 0;
+static void busy_guest_thread(X86 *c) {
+    while (!g_busy_stop) {
+        const double t0 = wall_seconds();
+        if (g_busy_cs)
+            call_import(c, "KERNEL32.dll", "EnterCriticalSection", {g_busy_cs});
+        while (!g_busy_stop && wall_seconds() - t0 < 0.010)
+            RECOMP_PREEMPT();
+        if (g_busy_cs)
+            call_import(c, "KERNEL32.dll", "LeaveCriticalSection", {g_busy_cs});
+        call_import(c, "KERNEL32.dll", "GetCurrentThreadId", {});
+        g_busy_calls = g_busy_calls + 1;
+    }
+    set_eax(c, 0);
+}
+
 // A window procedure that polls a non-blocking import while its window is
 // being created, and records whether the service thread ran meanwhile.
 static uint32_t g_creation_service_passes = 0xffffffffu;
@@ -3321,6 +3341,36 @@ static void test_scheduling(X86 *c) {
               g_idle_total * 1000, elapsed * 1000);
         poll_exit_code(c, worker, pcode, 400);
     }
+
+    // --- a busy worker hands the baton back to the waiting main thread soon -----
+    // Test79: the main (game) thread yields at its slice; a worker in a long stretch without an import then
+    // kept the baton to the stretch's end: frames of 35-100 ms in a race.
+    // Holding a critical section it is not cut off: the game thread would block on that section next.
+    uint32_t busy_cs = scratch_block(24);
+    call_import(c, "KERNEL32.dll", "InitializeCriticalSection", {busy_cs});
+    for (int holds = 0; holds < 2; ++holds) {
+        g_busy_stop = 0;
+        g_busy_calls = 0;
+        g_busy_cs = holds ? busy_cs : 0;
+        uint32_t fn = imports_alloc_trampoline("test", "busy_guest", busy_guest_thread, 1);
+        uint32_t worker = call_import(c, "KERNEL32.dll", "CreateThread", {0, 0, fn, 0, 0, 0});
+        double away[21];
+        for (double &a : away) {
+            const double t0 = wall_seconds();
+            host_guest_yield();
+            a = wall_seconds() - t0;
+        }
+        std::sort(away, away + 21); // the median: one host-scheduling stall must not fail the run
+        g_busy_stop = 1;
+        poll_exit_code(c, worker, pcode, 400);
+        if (holds)
+            check(away[10] > 0.005, "holding a critical section, it kept the baton to its stretch's end (median "
+                                    "%.2f ms)", away[10] * 1000);
+        else
+            check(away[10] < 0.003,
+                  "it handed the baton back after ~1 ms, not at its stretch's end (median %.2f ms)", away[10] * 1000);
+    }
+    g_busy_cs = 0;
 
     // --- a host signal wakes the RUN thread, on both waiting paths ----------
     // The run thread is the one that services the window system, so it is the

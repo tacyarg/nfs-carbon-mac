@@ -2751,6 +2751,9 @@ class Translator(object):
 
         for e in entries:
             labels.add(e)
+        # Test79: a function that calls others can be a scheduling point (x86.h RECOMP_PREEMPT); a leaf is
+        # too short to need one and too hot to pay for one.
+        preempt = any(ins.mnem == "CALL" for ins in fn.insns)
 
         out = []
         if fn.addr in INTRINSIC_BODY:
@@ -2769,6 +2772,8 @@ class Translator(object):
         fn.multi = bool(entries)     # body_ (two parameters): jumps use TAIL_FN2
         if entries:
             out.append("static void body_%08x(X86 *restrict c, uint32_t entry_) {" % fn.addr)
+            if preempt:
+                out.append("    RECOMP_PREEMPT();")
             if fn.seh_escapes:
                 out.append("    uint64_t seh_mark_ = recomp_seh_frame_mark(c);")
             out.append("    switch (entry_) {")
@@ -2779,6 +2784,8 @@ class Translator(object):
             out.append("    }")
         else:
             out.append("void fn_%08x(X86 *restrict c) {" % fn.addr)
+            if preempt:
+                out.append("    RECOMP_PREEMPT();")
             if fn.seh_escapes:
                 out.append("    uint64_t seh_mark_ = recomp_seh_frame_mark(c);")
             if head:
@@ -5757,9 +5764,11 @@ def main():
         if body and body[0].startswith("static void body_"):
             continue                      # multi-entry form, dispatched below
         lines = [l for l in body[1:] if l.strip()]
-        # Host-only ownership bookkeeping does not execute a guest instruction
-        # or modify its CPU. The first guest operation must still reach ADDR.
-        if lines and lines[0].strip() == "uint64_t seh_mark_ = recomp_seh_frame_mark(c);":
+        # Host-only ownership bookkeeping and the scheduling point (Test79) do not
+        # execute a guest instruction or modify its CPU. The first guest operation
+        # must still reach ADDR.
+        while lines and lines[0].strip() in ("uint64_t seh_mark_ = recomp_seh_frame_mark(c);",
+                                             "RECOMP_PREEMPT();"):
             lines = lines[1:]
         if not lines:
             continue

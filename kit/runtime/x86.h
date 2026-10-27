@@ -27,6 +27,20 @@
 extern "C" {
 #endif
 
+/* Test79: while the game thread waits for the baton, a lifted function's entry is a scheduling point too
+   (kernel32.cpp recomp_preempt): the sound library runs ~10 ms stretches without one import call, and only
+   an import call was one. translate.py puts this in every function that makes a call. */
+extern volatile uint8_t recomp_preempt_wanted;
+void recomp_preempt(void);
+#define RECOMP_PREEMPT()                                                                               \
+    do {                                                                                               \
+        if (__builtin_expect(recomp_preempt_wanted, 0))                                                \
+            recomp_preempt();                                                                          \
+    } while (0)
+
+#ifdef __cplusplus
+#endif
+
 /* The hot guest-memory and x87 helpers below are large enough that the
  * compiler stops inlining them on its own, which costs a call per guest
  * memory access, so these insist. */

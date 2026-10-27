@@ -50,7 +50,8 @@ enum : uint32_t {
     GROUPS = 2048u, // WebGPU bind groups: dropped at every submit before, when a texture retires now (d3d9_webgpu.cpp)
     TSC = 4096u,    // RDTSC: a clock read on every one before, on every 64th now (cpu.cpp recomp_rdtsc)
     PARAMS = 8192u, // shared effect parameters: sent to the pool on every set before, on change now (d3dx9.cpp)
-    RENAME = 16384u // WebGPU: a buffer rewritten after a draw used it submitted before, gets a new buffer now
+    RENAME = 16384u, // WebGPU: a buffer rewritten after a draw used it submitted before, gets a new buffer now
+    PRIO = 32768u    // the baton: a holder kept it to its slice's end before, gives it back to the game thread now
 };
 inline uint32_t switches() {
     static const uint32_t m = [] {
@@ -88,6 +89,8 @@ inline uint32_t switches() {
             bits |= PARAMS;
         if (strstr(e, "rename"))
             bits |= RENAME;
+        if (strstr(e, "prio"))
+            bits |= PRIO;
         return bits;
     }();
     return m;
