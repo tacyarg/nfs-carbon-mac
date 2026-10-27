@@ -1,6 +1,10 @@
 /**
- * recomp-kit: Emscripten's src/lib/libwasmfs_fetch.js (MIT, Emscripten 6.0.13) with two fixes,
- * marked below; linked with --js-library, it replaces the built-in one.
+ * recomp-kit: Emscripten's src/lib/libwasmfs_fetch.js (MIT, Emscripten 6.0.13) with two fixes
+ * and one addition, all marked below; linked with --js-library, it replaces the built-in one.
+ * The addition: a file the server's /data-manifest lists is read in 1 MiB blocks from
+ * /data-blocks/v2/ instead of the stock HEAD-then-range path (see the block address contract
+ * in planning/plans/2026-10-27-faster-loading.md). A file it does not list, or no manifest at
+ * all, falls back to the stock path below unchanged.
  */
 /**
  * @license
@@ -11,6 +15,12 @@
 addToLibrary({
   $wasmFS$JSMemoryRanges: {},
 
+  // recomp-kit: manifest-driven block streaming state, one copy for the whole page.
+  // manifestPromise resolves once to {byPath, blocks} or null (no usable manifest).
+  // files[file] = { entry, blocks: [Uint8Array,...] (by block index), inflight: {idx: Promise} }
+  // for a file the manifest lists; absent for everything else (stock path).
+  $wasmFS$streamState: { manifestPromise: null, files: {} },
+
   // Fetch backend: On first access of the file (either a read or a getSize), it
   // will fetch() the data from the network asynchronously. Otherwise, after
   // that fetch it behaves just like JSFile (and it reuses the code from there).
@@ -18,10 +28,121 @@ addToLibrary({
   _wasmfs_create_fetch_backend_js__deps: [
     '$wasmFS$backends',
     '$wasmFS$JSMemoryRanges',
+    '$wasmFS$streamState',
     '_wasmfs_fetch_get_file_url',
     '_wasmfs_fetch_get_chunk_size',
   ],
   _wasmfs_create_fetch_backend_js: async function(backend) {
+    // recomp-kit: the file's URL, as the stock code below builds it, split out so the
+    // manifest-lookup code can reuse it without duplicating the "//" collapse and the
+    // absolute-vs-relative handling.
+    function resolveFileUrl(file) {
+      var fileUrl_p = __wasmfs_fetch_get_file_url(file);
+      var fileUrl = UTF8ToString(fileUrl_p).replace(/([^:])\/{2,}/g, '$1/');
+      var isAbs = fileUrl.indexOf('://') !== -1;
+      return {fileUrl, isAbs};
+    }
+
+    // recomp-kit: load /data-manifest once per page. Resolves to null (use the stock
+    // path for every file) when it 404s, or does not look like a usable manifest.
+    function getManifest() {
+      if (!wasmFS$streamState.manifestPromise) {
+        wasmFS$streamState.manifestPromise = (async () => {
+          try {
+            var res = await fetch(new URL('/data-manifest', self.location.origin));
+            if (!res.ok) return null;
+            var m = await res.json();
+            if (!m || !m.blocks || !m.blocks.url || !m.blocks.size || !Array.isArray(m.files) || m.files.length === 0) {
+              return null;
+            }
+            var byPath = {};
+            for (var i = 0; i < m.files.length; i++) {
+              var f = m.files[i];
+              if (!f.d) byPath[f.p.toLowerCase()] = f; // skip directory entries ({d:1}, no size)
+            }
+            return {byPath: byPath, blocks: m.blocks};
+          } catch (_e) {
+            return null;
+          }
+        })();
+      }
+      return wasmFS$streamState.manifestPromise;
+    }
+
+    // recomp-kit: the manifest's entry for this file, or null to use the stock path
+    // (no manifest, the URL is not under the stream folder, or it does not list the file).
+    async function manifestRoute(file) {
+      var manifest = await getManifest();
+      if (!manifest) return null;
+      var {fileUrl} = resolveFileUrl(file);
+      var pathname = new URL(fileUrl, self.location.origin).pathname;
+      // The block address contract's lookup: the path relative to the "/data/" stream
+      // folder, lower-cased (see planning/plans/2026-10-27-faster-loading.md).
+      var m = /^\/data\/(.+)$/i.exec(pathname);
+      if (!m) return null;
+      var entry = manifest.byPath[m[1].toLowerCase()];
+      if (!entry) return null;
+      return {entry: entry, blocksCfg: manifest.blocks};
+    }
+
+    // recomp-kit: the contract address for block k of a manifest entry.
+    function blockUrl(entry, blocksCfg, k) {
+      var path = entry.p.split('/').map(encodeURIComponent).join('/');
+      return blocksCfg.url + path + '?b=' + k + '&n=1&m=' + entry.m + '&s=' + entry.s;
+    }
+
+    // recomp-kit: fetch any of `indexes` not already held or in flight (at most 8 of this
+    // read's requests in flight at once), then wait for every index in `indexes` to settle,
+    // including ones another concurrent read already started. A short body or a non-ok
+    // status fails the whole read (see read()'s catch); no bytes are copied either way.
+    async function ensureBlocks(file, entry, blocksCfg, indexes) {
+      var rec = wasmFS$streamState.files[file];
+      var blockSize = blocksCfg.size;
+      var toStart = indexes.filter((k) => rec.blocks[k] === undefined && !rec.inflight[k]);
+      for (var i = 0; i < toStart.length; i += 8) {
+        var batch = toStart.slice(i, i + 8);
+        batch.forEach((k) => {
+          var p = (async () => {
+            var res = await fetch(blockUrl(entry, blocksCfg, k));
+            if (!res.ok) throw {status: res.status};
+            var bytes = res.bytes ? await res.bytes() : new Uint8Array(await res.arrayBuffer());
+            var expected = Math.min(blockSize, entry.s - k * blockSize);
+            if (bytes.byteLength !== expected) throw {status: 502};
+            rec.blocks[k] = bytes;
+          })();
+          rec.inflight[k] = p.finally(() => { if (rec.inflight[k] === p) delete rec.inflight[k]; });
+        });
+        await Promise.all(batch.map((k) => rec.inflight[k]));
+      }
+      await Promise.all(indexes.map((k) => rec.inflight[k] || Promise.resolve()));
+    }
+
+    // recomp-kit: read() for a file the manifest lists. Throws like getFileRange on
+    // failure, so read()'s existing catch turns it into the right negative errno.
+    async function readFromBlocks(file, route, buffer, length, offset) {
+      var {entry, blocksCfg} = route;
+      length = Math.min(length, entry.s - offset);
+      if (length <= 0) return 0;
+      if (!wasmFS$streamState.files[file]) wasmFS$streamState.files[file] = {entry: entry, blocks: [], inflight: {}};
+      var blockSize = blocksCfg.size;
+      var firstBlock = (offset / blockSize) | 0;
+      var lastBlock = ((offset + length - 1) / blockSize) | 0;
+      var indexes = [];
+      for (var k = firstBlock; k <= lastBlock; k++) indexes.push(k);
+      await ensureBlocks(file, entry, blocksCfg, indexes);
+      var blocks = wasmFS$streamState.files[file].blocks;
+      var readLength = 0;
+      for (var i = firstBlock; i <= lastBlock; i++) {
+        var block = blocks[i];
+        var start = Math.max(i * blockSize, offset);
+        var blockStart = i * blockSize;
+        var end = Math.min(blockStart + blockSize, offset + length);
+        HEAPU8.set(block.subarray(start - blockStart, end - blockStart), buffer + (start - offset));
+        readLength = end - offset;
+      }
+      return readLength;
+    }
+
     // Get a promise that fetches the data and stores it in JS memory (if it has
     // not already been fetched).
     async function getFileRange(file, offset, len) {
@@ -124,6 +245,7 @@ addToLibrary({
       freeFile: async (file) => {
         // free memory
         wasmFS$JSMemoryRanges[file] = undefined;
+        wasmFS$streamState.files[file] = undefined; // recomp-kit: also drop any held blocks
       },
 
       write: async (file, buffer, length, offset) => {
@@ -137,6 +259,22 @@ addToLibrary({
         // and if the length is 0 or the offset is negative there's no reasonable read we can make.
         if (offset < 0 || length <= 0) {
           return 0;
+        }
+        // recomp-kit: a file the manifest lists is read in blocks instead of the stock
+        // HEAD-then-range path below. A manifest-fetch hiccup (not a block failure) just
+        // falls back to the stock path, same as "not listed".
+        var route = null;
+        try {
+          route = await manifestRoute(file);
+        } catch (_e) {
+          route = null;
+        }
+        if (route) {
+          try {
+            return await readFromBlocks(file, route, buffer, length, offset);
+          } catch (failedResponse) {
+            return failedResponse.status === 404 ? -{{{ cDefs.ENOENT }}} : -{{{ cDefs.EBADF }}};
+          }
         }
         try {
           await getFileRange(file, offset || 0, length);
@@ -166,6 +304,14 @@ addToLibrary({
         return readLength;
       },
       getSize: async (file) => {
+        // recomp-kit: the manifest already carries the size, no HEAD needed.
+        var route = null;
+        try {
+          route = await manifestRoute(file);
+        } catch (_e) {
+          route = null;
+        }
+        if (route) return route.entry.s;
         try {
           await getFileRange(file, 0, 0);
         } catch (failedResponse) {
