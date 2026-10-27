@@ -3068,22 +3068,23 @@ void sched_checkpoint() {
         g_sched_m.unlock();
     }
     // Test71: every import call reaches here (thousands per frame), and reading the clock on each
-    // cost ~6% of the main thread in busy driving. Read it on every 16th call only: the 1 ms slice
-    // is unchanged, a yield is at most 15 calls late (microseconds), and a polling loop such as
-    // the frame limiter's GetTickCount spin still yields.
+    // cost ~6% of the main thread in busy driving. Read it on every 128th call only: on the web a
+    // clock read is a call out to JS, and every 16th still cost ~25 ms/s of the game thread in a race.
+    // The slice is unchanged, a yield is at most 127 calls late (well under 1 ms), and a polling loop
+    // such as the frame limiter's GetTickCount spin still yields.
     // RECOMP_SCHED_CHECKPOINT_STRIDE=1 (TEST ONLY) restores a clock read on every call for A/B runs;
-    // so does the earlier phase of an in-run A/B (RECOMP_AB_PERIOD, platform/ab_phase.h).
+    // the earlier phase of an in-run A/B (RECOMP_AB_PERIOD, platform/ab_phase.h) reads every 16th.
     // Test75: the stride is counted before anything else, so 15 of 16 calls return without touching
     // a thread-local (each one is a _tlv_get_addr call on macOS). The counter is shared: only the
     // baton holder runs guest code, and a lost increment would only move a yield by one call.
     static const uint32_t stride_mask = [] {
         const char *e = recomp_env("SCHED_CHECKPOINT_STRIDE");
-        return (e && !strcmp(e, "1")) ? 0u : 15u;
+        return (e && !strcmp(e, "1")) ? 0u : 127u;
     }();
     static std::atomic<uint32_t> calls{0};
     const uint32_t n = calls.load(std::memory_order_relaxed) + 1;
     calls.store(n, std::memory_order_relaxed);
-    if ((n & (recomp_ab::old(recomp_ab::STRIDE) ? 0u : stride_mask)) != 0)
+    if ((n & (recomp_ab::old(recomp_ab::STRIDE) ? 15u : stride_mask)) != 0)
         return;
     if (threads().size() < 2 || t_atomic)
         return;
