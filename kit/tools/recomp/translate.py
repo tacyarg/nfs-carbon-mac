@@ -2756,7 +2756,7 @@ class Translator(object):
         if fn.addr in INTRINSIC_BODY:
             self.stats["_intrinsic_body"] += 1
             return ["/* runtime intrinsic */",
-                    "void fn_%08x(X86 *c) { %s }" % (fn.addr, INTRINSIC_BODY[fn.addr])]
+                    "void fn_%08x(X86 *restrict c) { %s }" % (fn.addr, INTRINSIC_BODY[fn.addr])]
         # Following branches can pull in addresses BELOW the entry, so the
         # first instruction in address order is not necessarily where this
         # function starts.  Jump to the entry explicitly rather than falling
@@ -2768,7 +2768,7 @@ class Translator(object):
         prologue = 0                 # lines before the first instruction
         fn.multi = bool(entries)     # body_ (two parameters): jumps use TAIL_FN2
         if entries:
-            out.append("static void body_%08x(X86 *c, uint32_t entry_) {" % fn.addr)
+            out.append("static void body_%08x(X86 *restrict c, uint32_t entry_) {" % fn.addr)
             if fn.seh_escapes:
                 out.append("    uint64_t seh_mark_ = recomp_seh_frame_mark(c);")
             out.append("    switch (entry_) {")
@@ -2778,7 +2778,7 @@ class Translator(object):
                        "    default: break;")
             out.append("    }")
         else:
-            out.append("void fn_%08x(X86 *c) {" % fn.addr)
+            out.append("void fn_%08x(X86 *restrict c) {" % fn.addr)
             if fn.seh_escapes:
                 out.append("    uint64_t seh_mark_ = recomp_seh_frame_mark(c);")
             if head:
@@ -2829,9 +2829,9 @@ class Translator(object):
                                 " | ".join(l.strip() for l in out[:prologue])))
         out.append("}")
         if entries:
-            out.append("void fn_%08x(X86 *c) { body_%08x(c, 0u); }" % (fn.addr, fn.addr))
+            out.append("void fn_%08x(X86 *restrict c) { body_%08x(c, 0u); }" % (fn.addr, fn.addr))
             for e in entries:
-                out.append("void fn_%08x(X86 *c) { body_%08x(c, %s); }"
+                out.append("void fn_%08x(X86 *restrict c) { body_%08x(c, %s); }"
                            % (e, fn.addr, hexlit(e)))
         return out
 

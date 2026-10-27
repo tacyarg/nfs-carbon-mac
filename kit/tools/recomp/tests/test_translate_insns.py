@@ -918,3 +918,10 @@ def test_segment_register_loads_do_not_reach_the_flat_model():
     text = "\n".join(tr.translate(fn))
     assert "recomp_int(c, 6u);" in text
     assert "0x23u" not in text and "wr" not in text.split("MOV DS,AX")[1].split("\n")[0]
+
+
+def test_lifted_functions_take_a_restrict_cpu():
+    # Nothing else points at the CPU struct while a lifted function runs, and
+    # saying so lets clang keep registers out of memory across guest stores.
+    src = translate_case(CASES[0])
+    assert "(X86 *restrict c)" in src or "(X86 *restrict c, uint32_t entry_)" in src, src[:200]

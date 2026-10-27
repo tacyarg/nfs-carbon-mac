@@ -13,8 +13,8 @@ BASE = 0x0D02A000
 
 
 def emitted_body(text, address):
-    shared = "static void body_%08x(X86 *c, uint32_t entry_) {" % address
-    start = shared if shared in text else "void fn_%08x(X86 *c) {" % address
+    shared = "static void body_%08x(X86 *restrict c, uint32_t entry_) {" % address
+    start = shared if shared in text else "void fn_%08x(X86 *restrict c) {" % address
     return text.split(start, 1)[1].split("\n}", 1)[0]
 
 
@@ -61,7 +61,7 @@ def test_pop_fs_register_restore_in_a_separate_helper(tmp_path, monkeypatch, zer
     img = synthetic_image({restore: raw}, base=BASE, size=0x1000)
     img.code_pointers = lambda *a, **kw: (set(), set())
     text = translate_entry_fixture(tmp_path, monkeypatch, img, {restore: raw})
-    body = text.split("void fn_%08x(X86 *c) {" % restore, 1)[1].split("\n}", 1)[0]
+    body = text.split("void fn_%08x(X86 *restrict c) {" % restore, 1)[1].split("\n}", 1)[0]
     assert ("recomp_seh_frame_leave(c)" in body) == zeroed
     assert "c->eip = c->r[1]; recomp_return(c); return;" in body
     assert "recomp_jump(c, t_)" not in body
