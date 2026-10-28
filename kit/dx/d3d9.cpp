@@ -746,12 +746,29 @@ static uint32_t resource_alloc(ComObj *o, uint32_t bytes) {
     return 1;
 }
 
+// A texture level's host copy is freed once the GPU has it (gpu_sync): held twice, a texture set
+// does not fit a phone's 2 GB browser tab. Anything needing the bytes again gets a blank copy, as
+// the browser cannot read a texture back in step; logged, since a game editing part of a texture
+// it already drew would show it.
+static void blob_restore(ComObj *o) {
+    if (!o || !o->dropped)
+        return;
+    o->blob.assign(o->dropped, 0);
+    o->dropped = 0;
+    static int logged;
+    if (logged++ < 5)
+        LOGW("d3d9: a %ux%u texture level (format %u) was used again after its host copy was "
+             "freed; it starts blank",
+             o->width, o->height, o->rmask);
+}
+
 // The bytes to read or write right now: the guest copy while locked.
 static uint8_t *resource_bytes(ComObj *o) {
     if (!o)
         return nullptr;
     if (o->pixels)
         return gm_ptr(o->pixels);
+    blob_restore(o);
     return o->blob.empty() ? nullptr : o->blob.data();
 }
 
@@ -760,6 +777,7 @@ static void gpu_after_unlock(ComObj *o, uint32_t lo, uint32_t hi);
 static void gpu_forget(ComObj *o);
 
 static uint32_t stage_lock(ComObj *o) {
+    blob_restore(o);
     if (!o || o->blob.empty())
         return 0;
     if (o->lock_count == 0)
@@ -917,7 +935,7 @@ static ComObj *texture_level(ComObj *tex, uint32_t level) {
 // the game wrote, the GPU's for what was drawn: a slot the game unlocked is
 // uploaded before the next draw that reads it, and a slot the GPU drew into is
 // read back before the game locks it.
-static const uint32_t USAGE_RENDERTARGET = 1, USAGE_DEPTHSTENCIL = 2;
+static const uint32_t USAGE_RENDERTARGET = 1, USAGE_DEPTHSTENCIL = 2, USAGE_DYNAMIC = 0x200;
 
 struct GpuMirror {
     bool defined = false;
@@ -1113,6 +1131,12 @@ static void gpu_sync(ComObj *o) {
                                        s->pitch);
         } else {
             host_d9_texture_upload(o->id, r.face, r.level, resource_bytes(s), s->pitch);
+            if (o->kind == K_D3D9TEXTURE && !s->pixels &&
+                !(resource_usage()[o->id] &
+                  (USAGE_RENDERTARGET | USAGE_DEPTHSTENCIL | USAGE_DYNAMIC))) {
+                s->dropped = (uint32_t)s->blob.size();
+                std::vector<uint8_t>().swap(s->blob);
+            }
         }
     }
 }
@@ -2986,6 +3010,7 @@ static void unpack_565(uint16_t c, uint8_t *o) {
 static void surface_to_rgba(ComObj *s, std::vector<uint8_t> &out) {
     const uint32_t w = s->width, h = s->height, fmt = s->rmask;
     out.assign(size_t(w) * h * 4, 0);
+    blob_restore(s);
     const uint8_t *src = s->blob.data();
     if (uint32_t block = dxt_block_bytes(fmt)) {
         const uint32_t bw = std::max((w + 3) / 4, 1u), bh = std::max((h + 3) / 4, 1u);

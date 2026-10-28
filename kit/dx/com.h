@@ -260,6 +260,7 @@ struct ComObj {
     uint32_t width = 0, height = 0, bpp = 0, pitch = 0;
     uint32_t pixels = 0; // guest address of the pixel memory
     uint32_t pixels_bytes = 0;
+    uint32_t dropped = 0; // a texture level's host copy size while it is freed (d3d9 gpu_sync)
     uint32_t rmask = 0, gmask = 0, bmask = 0, amask = 0;
     uint32_t palette_obj = 0;
     uint32_t clipper_obj = 0;

@@ -418,6 +418,46 @@ extern "C" int host_d9_texture_read(uint32_t, uint32_t, uint32_t, uint8_t *b, ui
     memset(b, 0x55, (size_t)pitch * 4);
     return 1;
 }
+// A texture's host copy is freed once the GPU has it (a phone's tab cannot hold every texture
+// twice); a later lock gets a blank copy back, as the browser cannot read a texture in step.
+// Render targets keep theirs.
+static void draw_with(uint32_t dev, uint32_t tex) {
+    const uint8_t decl[] = {0, 0, 0, 0, 3, 0, 0, 0, 0xff, 0, 0, 0, 17, 0, 0, 0};
+    memcpy(gm_ptr(sc(0x300)), decl, sizeof decl);
+    CHECK(call_method(dev, 86, {sc(0x300), sc(0x28)}) == 0); // CreateVertexDeclaration
+    const uint32_t d = rd32(sc(0x28));
+    CHECK(call_method(dev, 87, {d}) == 0);      // SetVertexDeclaration
+    CHECK(call_method(dev, 65, {0, tex}) == 0); // SetTexture
+    memset(gm_ptr(sc(0x900)), 0, 3 * 16);
+    CHECK(call_method(dev, 83, {4, 1, sc(0x900), 16}) == 0); // DrawPrimitiveUP, one triangle
+    CHECK(call_method(dev, 65, {0, 0}) == 0);
+    CHECK(call_method(dev, 87, {0}) == 0);
+    call_method(d, 2);
+}
+static void test_texture_copy_freed(uint32_t dev) {
+    CHECK(call_method(dev, 23, {8, 8, 1, 0, 21, 1, sc(0x800), 0}) == 0); // 8x8 A8R8G8B8, managed
+    const uint32_t tex = rd32(sc(0x800));
+    CHECK(call_method(tex, 18, {0, sc(0x804)}) == 0);
+    const uint32_t level = rd32(sc(0x804));
+    CHECK(call_method(tex, 19, {0, sc(0x810), 0, 0}) == 0);
+    memset(gm_ptr(rd32(sc(0x814))), 0x7f, 8 * 32);
+    CHECK(call_method(tex, 20, {0}) == 0);
+    CHECK(!com_this(level)->blob.empty());
+    draw_with(dev, tex); // the GPU gets it
+    CHECK(com_this(level)->blob.empty());
+    CHECK(call_method(tex, 19, {0, sc(0x810), 0, 0}) == 0);
+    CHECK(gm_ptr(rd32(sc(0x814)))[0] == 0 && gm_ptr(rd32(sc(0x814)))[255] == 0);
+    CHECK(call_method(tex, 20, {0}) == 0);
+    call_method(level, 2);
+    call_method(tex, 2);
+    CHECK(call_method(dev, 23, {8, 8, 1, 1, 21, 0, sc(0x800), 0}) == 0); // a render target
+    const uint32_t rt = rd32(sc(0x800));
+    CHECK(call_method(rt, 18, {0, sc(0x804)}) == 0);
+    draw_with(dev, rt);
+    CHECK(!com_this(rd32(sc(0x804)))->blob.empty());
+    call_method(rd32(sc(0x804)), 2);
+    call_method(rt, 2);
+}
 static void test_state_getters_and_readback(uint32_t dev) {
     constexpr uint32_t invalid = 0x8876086c, still_drawing = 0x8876021c, not_found = 0x88760866;
     // Render and sampler states read back what was set, and the documented defaults otherwise.
@@ -903,6 +943,7 @@ int main() {
     test_effect_pool_sharing(dev);
     test_effect_pool_lazy(dev);
     test_volume(dev);
+    test_texture_copy_freed(dev);
     test_state_getters_and_readback(dev);
     const uint32_t bound = make_volume(dev);
     const uint32_t bound_id = com_this(bound)->id;
