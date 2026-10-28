@@ -268,8 +268,12 @@
       <p class="hint">Change keys in the game's Options, Controls.</p>
       <!-- Each release: the new version in <summary> and its entry on top, written for players. -->
       <details class="changes">
-        <summary><b>v0.4.15</b> &middot; What's new</summary>
+        <summary><b>v0.4.16</b> &middot; What's new</summary>
         <div>
+          <h3>v0.4.16 &middot; Oct 27</h3>
+          <ul>
+            <li>If the game cannot start, the page now says where it stopped. A phone that runs out of memory no longer reloads straight back into the same crash; it tells you, and the next reload tries again.</li>
+          </ul>
           <h3>v0.4.15 &middot; Oct 27</h3>
           <ul>
             <li>Smaller download: the game's floating-point math is translated more compactly. The download is 16% smaller (about 10 MB instead of 12), so a first visit starts sooner, especially on phones.</li>
@@ -494,6 +498,23 @@ function status(text, isError) {
   if (isError) { playBtn.disabled = true; showLanding(); }
 }
 
+// Boot breadcrumbs. A phone kills a tab that runs out of memory without any error, and Safari then
+// reloads it straight into the same crash, so the stage is kept in localStorage: a boot that never got
+// going is reported once on the next visit instead of retried. Leaving the page normally clears it.
+let bootStage = "";
+function crumb(stage) {
+  bootStage = stage;
+  try { stage ? localStorage.setItem("nfsc-boot", stage) : localStorage.removeItem("nfsc-boot"); } catch {}
+}
+function bootError(e) {
+  if (!bootStage) return;
+  crumb("");
+  status(`The game stopped: ${e.message || e.reason?.message || e.reason}`, true);
+}
+addEventListener("error", bootError);
+addEventListener("unhandledrejection", bootError);
+addEventListener("pagehide", () => crumb(""));
+
 const log = [];
 window.recompLog = log; // for tests
 
@@ -602,6 +623,10 @@ function landingUrl() {
 function vipText(vip) { return `${vip >>> 24}.${(vip >> 16) & 255}.${(vip >> 8) & 255}.${vip & 255}`; }
 
 async function start() {
+  const lastBoot = localStorage.getItem("nfsc-boot");
+  crumb("");
+  if (lastBoot && !new URLSearchParams(location.search).has("RECOMP_BENCH"))
+    throw new Error(`Last time the game stopped while ${lastBoot}, most likely out of memory. Reload to try again.`);
   K = await import("./key.js");
   key = K.readKey(localStorage.getItem("nfsc-key") || "") || K.newKey();
   localStorage.setItem("nfsc-key", key);
@@ -734,6 +759,7 @@ async function start() {
       }
     }],
     onRuntimeInitialized() {
+      crumb("");
       status("");
       barFillEl.hidden = true;
       playBtn.disabled = false;
@@ -746,6 +772,7 @@ async function start() {
   const script = document.createElement("script");
   script.src = `@APP@.js?v=${pageVersion}`;
   script.onerror = () => status("The game's web build is missing.", true);
+  crumb("loading the game code");
   document.body.append(script);
 }
 
@@ -758,6 +785,8 @@ function play() {
       .then(() => screen.orientation?.lock?.("landscape")).catch(() => {});
   hideLanding();
   canvas.focus();
+  crumb("starting the game");
+  setTimeout(() => bootStage === "starting the game" && crumb(""), 60000);
   window.Module.callMain([`--exe=${window.Module.exe}`]);
 }
 
