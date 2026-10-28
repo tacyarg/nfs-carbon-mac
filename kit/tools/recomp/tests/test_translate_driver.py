@@ -762,7 +762,7 @@ def test_ret_classifies_after_pop_without_an_interior_switch_for_plain_returns()
     # Shared classification also serves the default of pushed-continuation
     # switches. A continuation that is also an entry must return, not run twice.
     header = (Path(ROOT) / "runtime/x86.h").read_text()
-    helper = header.split("static inline void recomp_return(X86 *c)", 1)[1].split("\n}\n", 1)[0]
+    helper = header.split("static inline void recomp_return(X86 *RECOMP_NOESC c)", 1)[1].split("\n}\n", 1)[0]
     assert helper.index("recomp_is_call_return") < helper.index("recomp_index_of")
     assert "recomp_call(c, c->eip);" in helper
 
@@ -1463,6 +1463,10 @@ def test_auxiliary_module_emits_prefixed_tables_that_self_register(tmp_path, mon
                       "int recomp_thunk_target_kind(", "recomp_override_hash", "const char *recomp_profile_name("):
         assert main_only not in text
     assert "recomp_blit_func_addrs[i_]" in header and "recomp_blit_hooked[i_]" in header
+    # Callers may keep registers in locals across calls that do not get the CPU.
+    assert header.index("#define RECOMP_NOESC __attribute__((noescape))") < header.index('#include "x86.h"')
+    assert "void fn_10001000(X86 *RECOMP_NOESC c);" in header
+    assert "static void recomp_blit_run_base(X86 *RECOMP_NOESC c, uint32_t i)" in text
     assert re.search(r"recomp_func_addrs\b", header) is None
 
 

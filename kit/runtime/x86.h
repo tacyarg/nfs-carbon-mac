@@ -351,6 +351,16 @@ struct X86 {
     uint64_t mm[8];
 };
 typedef struct X86 X86;
+/* The generated code's promise that a call keeps no copy of the CPU pointer.
+ * With it, a lifted function holds registers and flags in wasm locals across
+ * the calls that do not get `c` (store hooks, return checks, the baton check)
+ * and writes them back only before the calls that do.  funcs.h turns it on;
+ * the runtime is built without it, so its own copies (SEH's pending_cpu,
+ * kernel32's t_ctx) stay legal.  The rule that keeps it true: nothing reached
+ * from a call without `c` reads or writes a thread's X86 through such a copy. */
+#ifndef RECOMP_NOESC
+#define RECOMP_NOESC
+#endif
 
 /* ----------------------------------------------------------------- SSE */
 
@@ -358,24 +368,24 @@ typedef struct X86 X86;
  * in its low lanes is read and written through these. Scalar SSE arithmetic
  * leaves the lanes above its result alone, which is why nothing here clears
  * them. */
-static inline double xmm_f64(const X86 *c, int reg) {
+static inline double xmm_f64(const X86 *RECOMP_NOESC c, int reg) {
     uint64_t bits = (uint64_t)c->xmm[reg][0] | ((uint64_t)c->xmm[reg][1] << 32);
     double v;
     memcpy(&v, &bits, 8);
     return v;
 }
-static inline void xmm_set_f64(X86 *c, int reg, double v) {
+static inline void xmm_set_f64(X86 *RECOMP_NOESC c, int reg, double v) {
     uint64_t bits;
     memcpy(&bits, &v, 8);
     c->xmm[reg][0] = (uint32_t)bits;
     c->xmm[reg][1] = (uint32_t)(bits >> 32);
 }
-static inline float xmm_f32(const X86 *c, int reg) {
+static inline float xmm_f32(const X86 *RECOMP_NOESC c, int reg) {
     float v;
     memcpy(&v, &c->xmm[reg][0], 4);
     return v;
 }
-static inline void xmm_set_f32(X86 *c, int reg, float v) {
+static inline void xmm_set_f32(X86 *RECOMP_NOESC c, int reg, float v) {
     memcpy(&c->xmm[reg][0], &v, 4);
 }
 
@@ -414,7 +424,7 @@ static inline float recomp_sse_sqrtf(float v) {
  * together, and the rest of EFLAGS is cleared either way. The difference
  * between the two forms is only which NaNs raise an exception, and this kit
  * raises none. */
-static inline void recomp_comis(X86 *c, double a, double b) {
+static inline void recomp_comis(X86 *RECOMP_NOESC c, double a, double b) {
     c->eflags_of = c->eflags_af = c->eflags_sf = 0;
     if (a != a || b != b) {
         c->eflags_zf = c->eflags_pf = c->eflags_cf = 1;
@@ -431,12 +441,12 @@ static inline void recomp_comis(X86 *c, double a, double b) {
 
 /* Indirect CALL: dispatch `target` to a translated function, an import shim,
  * or recomp_unknown_call.  Generated into build/recomp/gen/table.c. */
-void recomp_call(X86 *c, uint32_t target);
+void recomp_call(X86 *RECOMP_NOESC c, uint32_t target);
 /* Calls `fn`, a translated function's address; generated TAIL_FN2 tail calls it
  * from a body_ on the web (musttail needs a two-parameter callee there). */
-void recomp_tail(X86 *c, uint32_t fn);
+void recomp_tail(X86 *RECOMP_NOESC c, uint32_t fn);
 /* Entry/callback driver for images that switch cooperative guest stacks. */
-void recomp_run(X86 *c, uint32_t target);
+void recomp_run(X86 *RECOMP_NOESC c, uint32_t target);
 extern const int recomp_resumable_stacks;
 
 /* RECOMP_WATCH_FRAME=1 reports a guest call that returns with EBP changed.
@@ -445,7 +455,7 @@ extern const int recomp_resumable_stacks;
  * damage surfaces as a wrong value far away. Off, this costs one register copy
  * and one compare per call, both of which the optimiser folds away. */
 extern uint32_t recomp_frame_watch;
-void recomp_frame_changed(X86 *c, uint32_t target, uint32_t before, uint32_t after);
+void recomp_frame_changed(X86 *RECOMP_NOESC c, uint32_t target, uint32_t before, uint32_t after);
 extern const int recomp_profile_enabled;
 void recomp_profile_push(uint32_t index);
 void recomp_profile_pop(void);
@@ -453,42 +463,42 @@ void recomp_profile_pop(void);
 /* Indirect JMP or tail call: dispatch `target` through the generated
  * block-entry table (every function start plus every decoded jump-table
  * target), then the import shim range.  Anything else aborts. */
-void recomp_jump(X86 *c, uint32_t target);
+void recomp_jump(X86 *RECOMP_NOESC c, uint32_t target);
 
 /* Indirect JMP whose target is neither a block entry nor a shim.  Aborts with
  * the target and the jumping instruction's address. */
-void recomp_unknown_jump(X86 *c, uint32_t target);
+void recomp_unknown_jump(X86 *RECOMP_NOESC c, uint32_t target);
 
 /* Provided by runtime/ ------------------------------------- */
 
 /* target is in [GUEST_SHIM_BASE, GUEST_SHIM_END): run import shim
  * (target - GUEST_SHIM_BASE) / GUEST_SHIM_STRIDE. */
-void recomp_shim_call(X86 *c, uint32_t target);
+void recomp_shim_call(X86 *RECOMP_NOESC c, uint32_t target);
 /* target is neither a translated function nor a shim.  Logs; may abort. */
-void recomp_unknown_call(X86 *c, uint32_t target);
+void recomp_unknown_call(X86 *RECOMP_NOESC c, uint32_t target);
 /* A popped callback sentinel can bypass translated callers. The innermost
  * guest_call owns the live host return checkpoint and its guest stack range. */
-void recomp_callback_return(X86 *c);
+void recomp_callback_return(X86 *RECOMP_NOESC c);
 uint32_t recomp_callback_depth(void);
 void recomp_callback_truncate(uint32_t depth);
-void recomp_callback_reset(X86 *c);
+void recomp_callback_reset(X86 *RECOMP_NOESC c);
 /* DIV/IDIV with a zero divisor or a quotient that does not fit. */
-void recomp_div_error(X86 *c, uint32_t addr);
+void recomp_div_error(X86 *RECOMP_NOESC c, uint32_t addr);
 
-void recomp_rdtsc(X86 *c); /* -> EDX:EAX */
-void recomp_cpuid(X86 *c); /* EAX in -> EAX EBX ECX EDX */
-uint32_t recomp_in(X86 *c, uint32_t port, int size);
-void recomp_out(X86 *c, uint32_t port, uint32_t val, int size);
-void recomp_cli(X86 *c);
-void recomp_sti(X86 *c);
-void recomp_hlt(X86 *c);
-void recomp_int(X86 *c, uint32_t vec);
+void recomp_rdtsc(X86 *RECOMP_NOESC c); /* -> EDX:EAX */
+void recomp_cpuid(X86 *RECOMP_NOESC c); /* EAX in -> EAX EBX ECX EDX */
+uint32_t recomp_in(X86 *RECOMP_NOESC c, uint32_t port, int size);
+void recomp_out(X86 *RECOMP_NOESC c, uint32_t port, uint32_t val, int size);
+void recomp_cli(X86 *RECOMP_NOESC c);
+void recomp_sti(X86 *RECOMP_NOESC c);
+void recomp_hlt(X86 *RECOMP_NOESC c);
+void recomp_int(X86 *RECOMP_NOESC c, uint32_t vec);
 /* An instruction the translator could not model, reached at run time. The
  * translation carries a trap at that address instead of refusing the whole
  * image, because a listing routinely decodes the data past a function's last
  * instruction as code. Reaching one is fatal and says where. */
-void recomp_unmodelled(X86 *c, uint32_t addr);
-void recomp_breakpoint(X86 *c, uint32_t addr);
+void recomp_unmodelled(X86 *RECOMP_NOESC c, uint32_t addr);
+void recomp_breakpoint(X86 *RECOMP_NOESC c, uint32_t addr);
 
 /* ------------------------------------------------------ hook dispatch -- */
 
@@ -501,18 +511,18 @@ void recomp_breakpoint(X86 *c, uint32_t addr);
  * then the flag with a release store, so a set flag always implies a visible
  * pointer. The index is passed to the dispatcher because one C function serves
  * every hooked entry. */
-typedef void (*RecompHookFn)(X86 *c, uint32_t index);
+typedef void (*RecompHookFn)(X86 *RECOMP_NOESC c, uint32_t index);
 
 /* Sorted table of every translated entry point (function starts, alternate
  * entries and jump-table block entries), from the generated table.c. */
 extern const uint32_t recomp_func_addrs[];
 extern const uint32_t recomp_func_count;
-extern void (*const recomp_base_ptrs[])(X86 *c);
+extern void (*const recomp_base_ptrs[])(X86 *RECOMP_NOESC c);
 /* The untouched translation of each entry. recomp_base_ptrs holds this build's
  * FN_<addr> override where one is defined, so the two tables differ exactly
  * over the override set - which is how a run record states what was replaced,
  * instead of trusting an environment variable read after the build. */
-extern void (*const recomp_raw_ptrs[])(X86 *c);
+extern void (*const recomp_raw_ptrs[])(X86 *RECOMP_NOESC c);
 extern RecompHookFn recomp_hook_ptrs[];
 extern uint8_t recomp_hooked[];
 
@@ -537,7 +547,7 @@ typedef struct RecompModule {
     uint32_t base, end;
     const uint32_t *func_addrs;
     uint32_t func_count;
-    void (*const *base_ptrs)(X86 *c);
+    void (*const *base_ptrs)(X86 *RECOMP_NOESC c);
     RecompHookFn *hook_ptrs;
     uint8_t *hooked;
     const uint32_t *call_returns;
@@ -554,7 +564,7 @@ const RecompModule *recomp_module_containing(uint32_t addr);
 int32_t recomp_module_lookup(uint32_t target);
 int recomp_module_is_call_return(uint32_t target);
 /* Dispatches target through the owning module's tables; 0 when no module owns it. */
-int recomp_module_call(X86 *c, uint32_t target);
+int recomp_module_call(X86 *RECOMP_NOESC c, uint32_t target);
 
 /* RET has already popped EIP and applied any immediate stack adjustment.
  * A CALL continuation belongs to the pending host caller, even when it is
@@ -562,7 +572,7 @@ int recomp_module_call(X86 *c, uint32_t target);
  * adapters that exchange a vtable method onto the guest stack before RET.
  * Delay-load adapters also RET into resolved import shims. Unknown returns
  * retain the existing EIP/host-return behaviour. */
-static inline void recomp_return(X86 *c) {
+static inline void recomp_return(X86 *RECOMP_NOESC c) {
     if (c->eip == GUEST_RETURN_SENTINEL) {
         recomp_callback_return(c);
         return;
@@ -590,13 +600,13 @@ RECOMP_HOT_INLINE uint32_t parity8(uint32_t v) {
  * other bit lives in eflags_misc so PUSHFD/POPFD is lossless. */
 #define X86_EFLAGS_SPLIT 0x00000cd5u /* CF PF AF ZF SF DF OF */
 
-static inline uint32_t x86_get_eflags(const X86 *c) {
+static inline uint32_t x86_get_eflags(const X86 *RECOMP_NOESC c) {
     return (c->eflags_misc & ~X86_EFLAGS_SPLIT) | 0x00000002u /* reserved bit 1 reads as 1 */
            | (c->eflags_cf << 0) | (c->eflags_pf << 2) | (c->eflags_af << 4) | (c->eflags_zf << 6) |
            (c->eflags_sf << 7) | (c->eflags_df << 10) | (c->eflags_of << 11);
 }
 
-static inline void x86_set_eflags(X86 *c, uint32_t v) {
+static inline void x86_set_eflags(X86 *RECOMP_NOESC c, uint32_t v) {
     c->eflags_misc = (v & ~X86_EFLAGS_SPLIT) | 0x00000002u;
     c->eflags_cf = (v >> 0) & 1u;
     c->eflags_pf = (v >> 2) & 1u;
@@ -608,7 +618,7 @@ static inline void x86_set_eflags(X86 *c, uint32_t v) {
 }
 
 /* SAHF: AH -> SF ZF AF PF CF */
-static inline void x86_sahf(X86 *c) {
+static inline void x86_sahf(X86 *RECOMP_NOESC c) {
     uint32_t ah = (c->r[R_EAX] >> 8) & 0xffu;
     c->eflags_cf = (ah >> 0) & 1u;
     c->eflags_pf = (ah >> 2) & 1u;
@@ -639,7 +649,7 @@ static inline void x86_sahf(X86 *c) {
             k = BITS - 1;                                                                          \
         return (UT)((int32_t)(ST)v >> k);                                                          \
     }                                                                                              \
-    static inline UT shl##BITS##_f(X86 *c, UT v, uint32_t n) {                                     \
+    static inline UT shl##BITS##_f(X86 *RECOMP_NOESC c, UT v, uint32_t n) {                                     \
         uint32_t cnt = n & 31u;                                                                    \
         UT r;                                                                                      \
         if (!cnt)                                                                                  \
@@ -655,7 +665,7 @@ static inline void x86_sahf(X86 *c) {
         c->eflags_pf = parity8((uint32_t)r);                                                       \
         return r;                                                                                  \
     }                                                                                              \
-    static inline UT shr##BITS##_f(X86 *c, UT v, uint32_t n) {                                     \
+    static inline UT shr##BITS##_f(X86 *RECOMP_NOESC c, UT v, uint32_t n) {                                     \
         uint32_t cnt = n & 31u;                                                                    \
         UT r;                                                                                      \
         if (!cnt)                                                                                  \
@@ -668,7 +678,7 @@ static inline void x86_sahf(X86 *c) {
         c->eflags_pf = parity8((uint32_t)r);                                                       \
         return r;                                                                                  \
     }                                                                                              \
-    static inline UT sar##BITS##_f(X86 *c, UT v, uint32_t n) {                                     \
+    static inline UT sar##BITS##_f(X86 *RECOMP_NOESC c, UT v, uint32_t n) {                                     \
         uint32_t cnt = n & 31u;                                                                    \
         UT r;                                                                                      \
         if (!cnt)                                                                                  \
@@ -691,7 +701,7 @@ static inline void x86_sahf(X86 *c) {
         uint32_t cnt = (n & 31u) % BITS, w = (uint32_t)v;                                          \
         return cnt ? (UT)((w >> cnt) | (w << (BITS - cnt))) : v;                                   \
     }                                                                                              \
-    static inline UT rol##BITS##_f(X86 *c, UT v, uint32_t n) {                                     \
+    static inline UT rol##BITS##_f(X86 *RECOMP_NOESC c, UT v, uint32_t n) {                                     \
         UT r;                                                                                      \
         if (!(n & 31u))                                                                            \
             return v;                                                                              \
@@ -700,7 +710,7 @@ static inline void x86_sahf(X86 *c) {
         c->eflags_of = ((uint32_t)(r >> (BITS - 1)) & 1u) ^ c->eflags_cf;                          \
         return r;                                                                                  \
     }                                                                                              \
-    static inline UT ror##BITS##_f(X86 *c, UT v, uint32_t n) {                                     \
+    static inline UT ror##BITS##_f(X86 *RECOMP_NOESC c, UT v, uint32_t n) {                                     \
         UT r;                                                                                      \
         if (!(n & 31u))                                                                            \
             return v;                                                                              \
@@ -709,7 +719,7 @@ static inline void x86_sahf(X86 *c) {
         c->eflags_of = c->eflags_cf ^ ((uint32_t)(r >> (BITS - 2)) & 1u);                          \
         return r;                                                                                  \
     }                                                                                              \
-    static inline UT rcl##BITS##_f(X86 *c, UT v, uint32_t n) {                                     \
+    static inline UT rcl##BITS##_f(X86 *RECOMP_NOESC c, UT v, uint32_t n) {                                     \
         uint32_t cnt = (n & 31u) % (BITS + 1), i;                                                  \
         for (i = 0; i < cnt; i++) {                                                                \
             uint32_t hi = (uint32_t)(v >> (BITS - 1)) & 1u;                                        \
@@ -720,7 +730,7 @@ static inline void x86_sahf(X86 *c) {
             c->eflags_of = ((uint32_t)(v >> (BITS - 1)) & 1u) ^ c->eflags_cf;                      \
         return v;                                                                                  \
     }                                                                                              \
-    static inline UT rcr##BITS##_f(X86 *c, UT v, uint32_t n) {                                     \
+    static inline UT rcr##BITS##_f(X86 *RECOMP_NOESC c, UT v, uint32_t n) {                                     \
         uint32_t cnt = (n & 31u) % (BITS + 1), i;                                                  \
         if (n & 31u)                                                                               \
             c->eflags_of = ((uint32_t)(v >> (BITS - 1)) & 1u) ^ c->eflags_cf;                      \
@@ -737,7 +747,7 @@ SHIFT_OPS(32, uint32_t, int32_t)
 #undef SHIFT_OPS
 
 /* SHLD/SHRD (32-bit forms only; the corpus has no 16-bit double shift). */
-static inline uint32_t shld32_f(X86 *c, uint32_t d, uint32_t s, uint32_t n) {
+static inline uint32_t shld32_f(X86 *RECOMP_NOESC c, uint32_t d, uint32_t s, uint32_t n) {
     uint32_t cnt = n & 31u, r;
     if (!cnt)
         return d;
@@ -749,7 +759,7 @@ static inline uint32_t shld32_f(X86 *c, uint32_t d, uint32_t s, uint32_t n) {
     c->eflags_pf = parity8(r);
     return r;
 }
-static inline uint32_t shrd32_f(X86 *c, uint32_t d, uint32_t s, uint32_t n) {
+static inline uint32_t shrd32_f(X86 *RECOMP_NOESC c, uint32_t d, uint32_t s, uint32_t n) {
     uint32_t cnt = n & 31u, r;
     if (!cnt)
         return d;
@@ -764,36 +774,36 @@ static inline uint32_t shrd32_f(X86 *c, uint32_t d, uint32_t s, uint32_t n) {
 
 /* ------------------------------------------------------ multiply / divide */
 
-static inline void mul8(X86 *c, uint8_t s) {
+static inline void mul8(X86 *RECOMP_NOESC c, uint8_t s) {
     uint32_t p = (uint32_t)(uint8_t)c->r[R_EAX] * s;
     c->r[R_EAX] = (c->r[R_EAX] & 0xffff0000u) | (p & 0xffffu);
     c->eflags_cf = c->eflags_of = ((p >> 8) != 0);
 }
-static inline void mul16(X86 *c, uint16_t s) {
+static inline void mul16(X86 *RECOMP_NOESC c, uint16_t s) {
     uint32_t p = (uint32_t)(uint16_t)c->r[R_EAX] * s;
     c->r[R_EAX] = (c->r[R_EAX] & 0xffff0000u) | (p & 0xffffu);
     c->r[R_EDX] = (c->r[R_EDX] & 0xffff0000u) | ((p >> 16) & 0xffffu);
     c->eflags_cf = c->eflags_of = ((p >> 16) != 0);
 }
-static inline void mul32(X86 *c, uint32_t s) {
+static inline void mul32(X86 *RECOMP_NOESC c, uint32_t s) {
     uint64_t p = (uint64_t)c->r[R_EAX] * s;
     c->r[R_EAX] = (uint32_t)p;
     c->r[R_EDX] = (uint32_t)(p >> 32);
     c->eflags_cf = c->eflags_of = (c->r[R_EDX] != 0);
 }
 
-static inline void imul8(X86 *c, uint8_t s) {
+static inline void imul8(X86 *RECOMP_NOESC c, uint8_t s) {
     int32_t p = (int32_t)(int8_t)c->r[R_EAX] * (int8_t)s;
     c->r[R_EAX] = (c->r[R_EAX] & 0xffff0000u) | ((uint32_t)p & 0xffffu);
     c->eflags_cf = c->eflags_of = (p != (int8_t)p);
 }
-static inline void imul16(X86 *c, uint16_t s) {
+static inline void imul16(X86 *RECOMP_NOESC c, uint16_t s) {
     int32_t p = (int32_t)(int16_t)c->r[R_EAX] * (int16_t)s;
     c->r[R_EAX] = (c->r[R_EAX] & 0xffff0000u) | ((uint32_t)p & 0xffffu);
     c->r[R_EDX] = (c->r[R_EDX] & 0xffff0000u) | (((uint32_t)p >> 16) & 0xffffu);
     c->eflags_cf = c->eflags_of = (p != (int16_t)p);
 }
-static inline void imul32(X86 *c, uint32_t s) {
+static inline void imul32(X86 *RECOMP_NOESC c, uint32_t s) {
     int64_t p = (int64_t)(int32_t)c->r[R_EAX] * (int32_t)s;
     c->r[R_EAX] = (uint32_t)p;
     c->r[R_EDX] = (uint32_t)((uint64_t)p >> 32);
@@ -806,7 +816,7 @@ static inline void imul32(X86 *c, uint32_t s) {
 static inline uint32_t imul2_32(uint32_t a, uint32_t b) {
     return a * b;
 }
-static inline uint32_t imul2_32_f(X86 *c, uint32_t a, uint32_t b) {
+static inline uint32_t imul2_32_f(X86 *RECOMP_NOESC c, uint32_t a, uint32_t b) {
     int64_t p = (int64_t)(int32_t)a * (int32_t)b;
     c->eflags_cf = c->eflags_of = (p != (int32_t)p);
     return (uint32_t)p;
@@ -814,13 +824,13 @@ static inline uint32_t imul2_32_f(X86 *c, uint32_t a, uint32_t b) {
 static inline uint16_t imul2_16(uint16_t a, uint16_t b) {
     return (uint16_t)((uint32_t)a * b);
 }
-static inline uint16_t imul2_16_f(X86 *c, uint16_t a, uint16_t b) {
+static inline uint16_t imul2_16_f(X86 *RECOMP_NOESC c, uint16_t a, uint16_t b) {
     int32_t p = (int32_t)(int16_t)a * (int16_t)b;
     c->eflags_cf = c->eflags_of = (p != (int16_t)p);
     return (uint16_t)p;
 }
 
-static inline void div8(X86 *c, uint8_t s, uint32_t at) {
+static inline void div8(X86 *RECOMP_NOESC c, uint8_t s, uint32_t at) {
     uint32_t n = (uint16_t)c->r[R_EAX], q;
     if (!s) {
         recomp_div_error(c, at);
@@ -833,7 +843,7 @@ static inline void div8(X86 *c, uint8_t s, uint32_t at) {
     }
     c->r[R_EAX] = (c->r[R_EAX] & 0xffff0000u) | (q & 0xffu) | ((n % s) << 8);
 }
-static inline void div16(X86 *c, uint16_t s, uint32_t at) {
+static inline void div16(X86 *RECOMP_NOESC c, uint16_t s, uint32_t at) {
     uint32_t n = ((uint32_t)(uint16_t)c->r[R_EDX] << 16) | (uint16_t)c->r[R_EAX], q;
     if (!s) {
         recomp_div_error(c, at);
@@ -847,7 +857,7 @@ static inline void div16(X86 *c, uint16_t s, uint32_t at) {
     c->r[R_EAX] = (c->r[R_EAX] & 0xffff0000u) | q;
     c->r[R_EDX] = (c->r[R_EDX] & 0xffff0000u) | (n % s);
 }
-static inline void div32(X86 *c, uint32_t s, uint32_t at) {
+static inline void div32(X86 *RECOMP_NOESC c, uint32_t s, uint32_t at) {
     uint64_t n = ((uint64_t)c->r[R_EDX] << 32) | c->r[R_EAX], q;
     if (!s) {
         recomp_div_error(c, at);
@@ -862,7 +872,7 @@ static inline void div32(X86 *c, uint32_t s, uint32_t at) {
     c->r[R_EDX] = (uint32_t)(n % s);
 }
 
-static inline void idiv8(X86 *c, uint8_t s, uint32_t at) {
+static inline void idiv8(X86 *RECOMP_NOESC c, uint8_t s, uint32_t at) {
     int32_t n = (int16_t)c->r[R_EAX], q;
     if (!s) {
         recomp_div_error(c, at);
@@ -880,7 +890,7 @@ static inline void idiv8(X86 *c, uint8_t s, uint32_t at) {
     c->r[R_EAX] = (c->r[R_EAX] & 0xffff0000u) | ((uint32_t)q & 0xffu) |
                   (((uint32_t)(n % (int8_t)s) & 0xffu) << 8);
 }
-static inline void idiv16(X86 *c, uint16_t s, uint32_t at) {
+static inline void idiv16(X86 *RECOMP_NOESC c, uint16_t s, uint32_t at) {
     int32_t n = (int32_t)(((uint32_t)(uint16_t)c->r[R_EDX] << 16) | (uint16_t)c->r[R_EAX]), q;
     if (!s) {
         recomp_div_error(c, at);
@@ -898,7 +908,7 @@ static inline void idiv16(X86 *c, uint16_t s, uint32_t at) {
     c->r[R_EAX] = (c->r[R_EAX] & 0xffff0000u) | ((uint32_t)q & 0xffffu);
     c->r[R_EDX] = (c->r[R_EDX] & 0xffff0000u) | ((uint32_t)(n % (int16_t)s) & 0xffffu);
 }
-static inline void idiv32(X86 *c, uint32_t s, uint32_t at) {
+static inline void idiv32(X86 *RECOMP_NOESC c, uint32_t s, uint32_t at) {
     int64_t n = (int64_t)(((uint64_t)c->r[R_EDX] << 32) | c->r[R_EAX]), q;
     if (!s) {
         recomp_div_error(c, at);
@@ -921,18 +931,18 @@ static inline void idiv32(X86 *c, uint32_t s, uint32_t at) {
 
 /* With a zero source the destination is architecturally undefined; unicorn,
  * like AMD, leaves it unchanged, so the old value is passed in. */
-static inline uint32_t bsr32_f(X86 *c, uint32_t old, uint32_t v) {
+static inline uint32_t bsr32_f(X86 *RECOMP_NOESC c, uint32_t old, uint32_t v) {
     c->eflags_zf = (v == 0);
     return v ? 31u - (uint32_t)__builtin_clz(v) : old;
 }
-static inline uint32_t bsf32_f(X86 *c, uint32_t old, uint32_t v) {
+static inline uint32_t bsf32_f(X86 *RECOMP_NOESC c, uint32_t old, uint32_t v) {
     c->eflags_zf = (v == 0);
     return v ? (uint32_t)__builtin_ctz(v) : old;
 }
 
 /* ---------------------------------------------------------- push and pop */
 
-static inline void x86_pushad(X86 *c) {
+static inline void x86_pushad(X86 *RECOMP_NOESC c) {
     uint32_t sp = c->r[R_ESP];
     c->r[R_ESP] -= 32;
     wr32(sp - 4, c->r[R_EAX]);
@@ -944,7 +954,7 @@ static inline void x86_pushad(X86 *c) {
     wr32(sp - 28, c->r[R_ESI]);
     wr32(sp - 32, c->r[R_EDI]);
 }
-static inline void x86_popad(X86 *c) {
+static inline void x86_popad(X86 *RECOMP_NOESC c) {
     uint32_t sp = c->r[R_ESP];
     c->r[R_EDI] = rd32(sp + 0);
     c->r[R_ESI] = rd32(sp + 4);
@@ -960,22 +970,22 @@ static inline void x86_popad(X86 *c) {
  * DF selects the step direction.  The REP forms use ECX as the counter.
  */
 #define STRING_OPS(SUF, BITS, UT, RD, WR)                                                          \
-    static inline void stos##SUF(X86 *c) {                                                         \
+    static inline void stos##SUF(X86 *RECOMP_NOESC c) {                                                         \
         WR(c->r[R_EDI], (UT)c->r[R_EAX]);                                                          \
         c->r[R_EDI] += c->eflags_df ? (uint32_t)-(BITS / 8) : (uint32_t)(BITS / 8);                \
     }                                                                                              \
-    static inline void rep_stos##SUF(X86 *c) {                                                     \
+    static inline void rep_stos##SUF(X86 *RECOMP_NOESC c) {                                                     \
         while (c->r[R_ECX]) {                                                                      \
             stos##SUF(c);                                                                          \
             c->r[R_ECX]--;                                                                         \
         }                                                                                          \
     }                                                                                              \
-    static inline void movs##SUF(X86 *c) {                                                         \
+    static inline void movs##SUF(X86 *RECOMP_NOESC c) {                                                         \
         WR(c->r[R_EDI], RD(c->r[R_ESI]));                                                          \
         c->r[R_EDI] += c->eflags_df ? (uint32_t)-(BITS / 8) : (uint32_t)(BITS / 8);                \
         c->r[R_ESI] += c->eflags_df ? (uint32_t)-(BITS / 8) : (uint32_t)(BITS / 8);                \
     }                                                                                              \
-    static inline void rep_movs##SUF(X86 *c) {                                                     \
+    static inline void rep_movs##SUF(X86 *RECOMP_NOESC c) {                                                     \
         while (c->r[R_ECX]) {                                                                      \
             movs##SUF(c);                                                                          \
             c->r[R_ECX]--;                                                                         \
@@ -985,27 +995,27 @@ static inline void x86_popad(X86 *c) {
      * misdecoded - Windows would fault - so they exist to be translatable      \
      * rather than useful: the port shims answer, and the pointer and count     \
      * advance exactly as the other string forms do. */                   \
-    static inline void ins##SUF(X86 *c) {                                                          \
+    static inline void ins##SUF(X86 *RECOMP_NOESC c) {                                                          \
         WR(c->r[R_EDI], (UT)recomp_in(c, c->r[R_EDX] & 0xffffu, BITS / 8));                        \
         c->r[R_EDI] += c->eflags_df ? (uint32_t)-(BITS / 8) : (uint32_t)(BITS / 8);                \
     }                                                                                              \
-    static inline void rep_ins##SUF(X86 *c) {                                                      \
+    static inline void rep_ins##SUF(X86 *RECOMP_NOESC c) {                                                      \
         while (c->r[R_ECX]) {                                                                      \
             ins##SUF(c);                                                                           \
             c->r[R_ECX]--;                                                                         \
         }                                                                                          \
     }                                                                                              \
-    static inline void outs##SUF(X86 *c) {                                                         \
+    static inline void outs##SUF(X86 *RECOMP_NOESC c) {                                                         \
         recomp_out(c, c->r[R_EDX] & 0xffffu, RD(c->r[R_ESI]), BITS / 8);                           \
         c->r[R_ESI] += c->eflags_df ? (uint32_t)-(BITS / 8) : (uint32_t)(BITS / 8);                \
     }                                                                                              \
-    static inline void rep_outs##SUF(X86 *c) {                                                     \
+    static inline void rep_outs##SUF(X86 *RECOMP_NOESC c) {                                                     \
         while (c->r[R_ECX]) {                                                                      \
             outs##SUF(c);                                                                          \
             c->r[R_ECX]--;                                                                         \
         }                                                                                          \
     }                                                                                              \
-    static inline void lods##SUF(X86 *c) {                                                         \
+    static inline void lods##SUF(X86 *RECOMP_NOESC c) {                                                         \
         UT v = RD(c->r[R_ESI]);                                                                    \
         if (BITS == 32)                                                                            \
             c->r[R_EAX] = (uint32_t)v;                                                             \
@@ -1021,11 +1031,11 @@ STRING_OPS(d, 32, uint32_t, rd32, wr32)
 
 /* SCAS/CMPS set the flags of a SUB.  Defined out of line below the generic
  * SUB flag helper. */
-static inline void x86_sub_flags8(X86 *c, uint32_t a, uint32_t b);
-static inline void x86_sub_flags16(X86 *c, uint32_t a, uint32_t b);
-static inline void x86_sub_flags32(X86 *c, uint32_t a, uint32_t b);
+static inline void x86_sub_flags8(X86 *RECOMP_NOESC c, uint32_t a, uint32_t b);
+static inline void x86_sub_flags16(X86 *RECOMP_NOESC c, uint32_t a, uint32_t b);
+static inline void x86_sub_flags32(X86 *RECOMP_NOESC c, uint32_t a, uint32_t b);
 
-static inline void x86_sub_flags8(X86 *c, uint32_t a, uint32_t b) {
+static inline void x86_sub_flags8(X86 *RECOMP_NOESC c, uint32_t a, uint32_t b) {
     uint32_t r = (a - b) & 0xffu;
     c->eflags_cf = ((a & 0xffu) < (b & 0xffu));
     c->eflags_of = (((a ^ b) & (a ^ r)) >> 7) & 1u;
@@ -1034,7 +1044,7 @@ static inline void x86_sub_flags8(X86 *c, uint32_t a, uint32_t b) {
     c->eflags_sf = (r >> 7) & 1u;
     c->eflags_pf = parity8(r);
 }
-static inline void x86_sub_flags16(X86 *c, uint32_t a, uint32_t b) {
+static inline void x86_sub_flags16(X86 *RECOMP_NOESC c, uint32_t a, uint32_t b) {
     uint32_t r = (a - b) & 0xffffu;
     c->eflags_cf = ((a & 0xffffu) < (b & 0xffffu));
     c->eflags_of = (((a ^ b) & (a ^ r)) >> 15) & 1u;
@@ -1043,7 +1053,7 @@ static inline void x86_sub_flags16(X86 *c, uint32_t a, uint32_t b) {
     c->eflags_sf = (r >> 15) & 1u;
     c->eflags_pf = parity8(r);
 }
-static inline void x86_sub_flags32(X86 *c, uint32_t a, uint32_t b) {
+static inline void x86_sub_flags32(X86 *RECOMP_NOESC c, uint32_t a, uint32_t b) {
     uint32_t r = a - b;
     c->eflags_cf = (a < b);
     c->eflags_of = (((a ^ b) & (a ^ r)) >> 31) & 1u;
@@ -1053,11 +1063,11 @@ static inline void x86_sub_flags32(X86 *c, uint32_t a, uint32_t b) {
     c->eflags_pf = parity8(r);
 }
 
-static inline void scasb(X86 *c) {
+static inline void scasb(X86 *RECOMP_NOESC c) {
     x86_sub_flags8(c, c->r[R_EAX] & 0xffu, rd8(c->r[R_EDI]));
     c->r[R_EDI] += c->eflags_df ? (uint32_t)-1 : 1u;
 }
-static inline void repne_scasb(X86 *c) {
+static inline void repne_scasb(X86 *RECOMP_NOESC c) {
     while (c->r[R_ECX]) {
         scasb(c);
         c->r[R_ECX]--;
@@ -1065,7 +1075,7 @@ static inline void repne_scasb(X86 *c) {
             break;
     }
 }
-static inline void repe_scasb(X86 *c) {
+static inline void repe_scasb(X86 *RECOMP_NOESC c) {
     while (c->r[R_ECX]) {
         scasb(c);
         c->r[R_ECX]--;
@@ -1073,12 +1083,12 @@ static inline void repe_scasb(X86 *c) {
             break;
     }
 }
-static inline void cmpsb(X86 *c) {
+static inline void cmpsb(X86 *RECOMP_NOESC c) {
     x86_sub_flags8(c, rd8(c->r[R_ESI]), rd8(c->r[R_EDI]));
     c->r[R_EDI] += c->eflags_df ? (uint32_t)-1 : 1u;
     c->r[R_ESI] += c->eflags_df ? (uint32_t)-1 : 1u;
 }
-static inline void repe_cmpsb(X86 *c) {
+static inline void repe_cmpsb(X86 *RECOMP_NOESC c) {
     while (c->r[R_ECX]) {
         cmpsb(c);
         c->r[R_ECX]--;
@@ -1086,7 +1096,7 @@ static inline void repe_cmpsb(X86 *c) {
             break;
     }
 }
-static inline void repne_cmpsb(X86 *c) {
+static inline void repne_cmpsb(X86 *RECOMP_NOESC c) {
     while (c->r[R_ECX]) {
         cmpsb(c);
         c->r[R_ECX]--;
@@ -1098,16 +1108,16 @@ static inline void repne_cmpsb(X86 *c) {
 /* The same at word and dword width.  A REP-prefixed compare with ECX = 0
  * runs nothing and leaves every flag as it found it, like the byte forms. */
 #define X86_CMPS_SCAS(SUF, BITS, MASK)                                                             \
-    static inline void scas##SUF(X86 *c) {                                                         \
+    static inline void scas##SUF(X86 *RECOMP_NOESC c) {                                                         \
         x86_sub_flags##BITS(c, c->r[R_EAX] & (MASK), rd##BITS(c->r[R_EDI]));                       \
         c->r[R_EDI] += c->eflags_df ? (uint32_t)-(BITS / 8) : (uint32_t)(BITS / 8);                \
     }                                                                                              \
-    static inline void cmps##SUF(X86 *c) {                                                         \
+    static inline void cmps##SUF(X86 *RECOMP_NOESC c) {                                                         \
         x86_sub_flags##BITS(c, rd##BITS(c->r[R_ESI]), rd##BITS(c->r[R_EDI]));                      \
         c->r[R_EDI] += c->eflags_df ? (uint32_t)-(BITS / 8) : (uint32_t)(BITS / 8);                \
         c->r[R_ESI] += c->eflags_df ? (uint32_t)-(BITS / 8) : (uint32_t)(BITS / 8);                \
     }                                                                                              \
-    static inline void repe_scas##SUF(X86 *c) {                                                    \
+    static inline void repe_scas##SUF(X86 *RECOMP_NOESC c) {                                                    \
         while (c->r[R_ECX]) {                                                                      \
             scas##SUF(c);                                                                          \
             c->r[R_ECX]--;                                                                         \
@@ -1115,7 +1125,7 @@ static inline void repne_cmpsb(X86 *c) {
                 break;                                                                             \
         }                                                                                          \
     }                                                                                              \
-    static inline void repne_scas##SUF(X86 *c) {                                                   \
+    static inline void repne_scas##SUF(X86 *RECOMP_NOESC c) {                                                   \
         while (c->r[R_ECX]) {                                                                      \
             scas##SUF(c);                                                                          \
             c->r[R_ECX]--;                                                                         \
@@ -1123,7 +1133,7 @@ static inline void repne_cmpsb(X86 *c) {
                 break;                                                                             \
         }                                                                                          \
     }                                                                                              \
-    static inline void repe_cmps##SUF(X86 *c) {                                                    \
+    static inline void repe_cmps##SUF(X86 *RECOMP_NOESC c) {                                                    \
         while (c->r[R_ECX]) {                                                                      \
             cmps##SUF(c);                                                                          \
             c->r[R_ECX]--;                                                                         \
@@ -1131,7 +1141,7 @@ static inline void repne_cmpsb(X86 *c) {
                 break;                                                                             \
         }                                                                                          \
     }                                                                                              \
-    static inline void repne_cmps##SUF(X86 *c) {                                                   \
+    static inline void repne_cmps##SUF(X86 *RECOMP_NOESC c) {                                                   \
         while (c->r[R_ECX]) {                                                                      \
             cmps##SUF(c);                                                                          \
             c->r[R_ECX]--;                                                                         \
@@ -1172,10 +1182,10 @@ RECOMP_HOT_INLINE unsigned ftag_classify(double v) {
     return FTAG_VALID; /* NORMAL and SUBNORMAL */
 }
 
-RECOMP_HOT_INLINE unsigned ftag_of(const X86 *c, unsigned phys) {
+RECOMP_HOT_INLINE unsigned ftag_of(const X86 *RECOMP_NOESC c, unsigned phys) {
     return (c->fpu_tag >> (2u * (phys & 7u))) & 3u;
 }
-RECOMP_HOT_INLINE void ftag_put(X86 *c, unsigned phys, unsigned tag) {
+RECOMP_HOT_INLINE void ftag_put(X86 *RECOMP_NOESC c, unsigned phys, unsigned tag) {
     unsigned sh = 2u * (phys & 7u);
     c->fpu_tag = (uint16_t)((c->fpu_tag & ~(3u << sh)) | (tag << sh));
 }
@@ -1184,7 +1194,7 @@ RECOMP_HOT_INLINE void ftag_put(X86 *c, unsigned phys, unsigned tag) {
  * exist only where a program can see them, the saved tag word, so FNSTENV and
  * FNSAVE classify the values then.  Classifying on every x87 write cost ~4 %
  * of the generated code for a word Carbon's exe never reads. */
-static inline uint16_t x87_tag_word(const X86 *c) {
+static inline uint16_t x87_tag_word(const X86 *RECOMP_NOESC c) {
     unsigned w = 0, phys;
     for (phys = 0; phys < 8; phys++) {
         unsigned t = ftag_of(c, phys);
@@ -1193,25 +1203,25 @@ static inline uint16_t x87_tag_word(const X86 *c) {
     return (uint16_t)w;
 }
 /* ST(i) is empty (nothing has been pushed into it since the last FINIT). */
-RECOMP_HOT_INLINE unsigned fempty(const X86 *c, unsigned i) {
+RECOMP_HOT_INLINE unsigned fempty(const X86 *RECOMP_NOESC c, unsigned i) {
     return ftag_of(c, (c->fpu_top + i) & 7u) == FTAG_EMPTY;
 }
 
-RECOMP_HOT_INLINE void fpush(X86 *c, double v) {
+RECOMP_HOT_INLINE void fpush(X86 *RECOMP_NOESC c, double v) {
     c->fpu_top = (c->fpu_top - 1u) & 7u;
     c->st[c->fpu_top] = v;
     c->st_bits[c->fpu_top] = 0;
     c->st_exact[c->fpu_top] = 0;
     ftag_put(c, c->fpu_top, FTAG_VALID);
 }
-static inline void fpush_int(X86 *c, int64_t v) {
+static inline void fpush_int(X86 *RECOMP_NOESC c, int64_t v) {
     fpush(c, (double)v);
     c->st_bits[c->fpu_top] = (uint64_t)v;
     c->st_exact[c->fpu_top] = 1;
 }
 /* FLD ST(i) captures the source before pushing, including the wraparound
  * case where the destination is the same physical slot. */
-static inline void fpush_st(X86 *c, unsigned i) {
+static inline void fpush_st(X86 *RECOMP_NOESC c, unsigned i) {
     unsigned src = (c->fpu_top + i) & 7u;
     uint64_t bits = c->st_bits[src];
     uint8_t exact = c->st_exact[src];
@@ -1221,14 +1231,14 @@ static inline void fpush_st(X86 *c, unsigned i) {
     c->st_exact[c->fpu_top] = exact;
     ftag_put(c, c->fpu_top, tag);
 }
-RECOMP_HOT_INLINE double fpop(X86 *c) {
+RECOMP_HOT_INLINE double fpop(X86 *RECOMP_NOESC c) {
     double v = c->st[c->fpu_top];
     c->st_exact[c->fpu_top] = 0;
     ftag_put(c, c->fpu_top, FTAG_EMPTY);
     c->fpu_top = (c->fpu_top + 1u) & 7u;
     return v;
 }
-RECOMP_HOT_INLINE void fdrop(X86 *c) {
+RECOMP_HOT_INLINE void fdrop(X86 *RECOMP_NOESC c) {
     c->st_exact[c->fpu_top] = 0;
     ftag_put(c, c->fpu_top, FTAG_EMPTY);
     c->fpu_top = (c->fpu_top + 1u) & 7u;
@@ -1236,7 +1246,7 @@ RECOMP_HOT_INLINE void fdrop(X86 *c) {
 
 /* Assign ST(i).  The slot is already full (it was an operand), so its tag
  * stays as it is; the saved tag word classifies the value (x87_tag_word). */
-RECOMP_HOT_INLINE void fset(X86 *c, unsigned i, double v) {
+RECOMP_HOT_INLINE void fset(X86 *RECOMP_NOESC c, unsigned i, double v) {
     unsigned phys = (c->fpu_top + i) & 7u;
     c->st[phys] = v;
     c->st_bits[phys] = 0;
@@ -1244,7 +1254,7 @@ RECOMP_HOT_INLINE void fset(X86 *c, unsigned i, double v) {
 }
 
 /* Register moves preserve the integer representation as well as the tag. */
-static inline void fcopy(X86 *c, unsigned dst, unsigned src) {
+static inline void fcopy(X86 *RECOMP_NOESC c, unsigned dst, unsigned src) {
     unsigned a = (c->fpu_top + dst) & 7u, b = (c->fpu_top + src) & 7u;
     c->st[a] = c->st[b];
     c->st_bits[a] = c->st_bits[b];
@@ -1253,7 +1263,7 @@ static inline void fcopy(X86 *c, unsigned dst, unsigned src) {
 }
 
 /* FXCH: the tags and exact integers travel with the values. */
-RECOMP_HOT_INLINE void fxch(X86 *c, unsigned i) {
+RECOMP_HOT_INLINE void fxch(X86 *RECOMP_NOESC c, unsigned i) {
     unsigned a = c->fpu_top & 7u, b = (c->fpu_top + i) & 7u;
     double v = c->st[a];
     unsigned t = ftag_of(c, a);
@@ -1290,13 +1300,13 @@ static inline double x87_indefinite(void) {
 /* x87 raises #Z when a finite non-zero dividend meets a zero divisor.  This
  * is the one exception besides IE that the parity oracle also reports, so
  * modelling it keeps the exemption down to IE alone. */
-RECOMP_HOT_INLINE double fdivz(X86 *c, double a, double b) {
+RECOMP_HOT_INLINE double fdivz(X86 *RECOMP_NOESC c, double a, double b) {
     if (b == 0.0 && a == a && !isinf(a) && a != 0.0)
         c->fpu_sw |= 0x0004u;
     return a / b;
 }
 
-RECOMP_HOT_INLINE double fx87_exact(X86 *c, double r) {
+RECOMP_HOT_INLINE double fx87_exact(X86 *RECOMP_NOESC c, double r) {
     if (r == r)
         return r;
     c->fpu_sw |= 0x0001u; /* IE: invalid operation */
@@ -1307,7 +1317,7 @@ RECOMP_HOT_INLINE double fx87_exact(X86 *c, double r) {
  * observe the precision-control field.  PC=00 rounds to single; PC=10
  * (53-bit) and PC=11 (64-bit) both land on the double we store, 64-bit
  * approximated by 53 per the plan ruling. */
-RECOMP_HOT_INLINE double fx87(X86 *c, double r) {
+RECOMP_HOT_INLINE double fx87(X86 *RECOMP_NOESC c, double r) {
     if (r != r) {
         c->fpu_sw |= 0x0001u;
         return x87_indefinite();
@@ -1328,7 +1338,7 @@ RECOMP_HOT_INLINE int is_snan(double v) {
 /* FCOM/FUCOM: C3 C2 C0 = ZF PF CF of the comparison.  They differ only in
  * which NaNs raise the invalid-operation exception: FCOM raises on any NaN,
  * FUCOM only on a signalling one. */
-RECOMP_HOT_INLINE void fcom_common(X86 *c, double a, double b, int quiet) {
+RECOMP_HOT_INLINE void fcom_common(X86 *RECOMP_NOESC c, double a, double b, int quiet) {
     uint16_t sw = (uint16_t)(c->fpu_sw & (uint16_t)~0x4700u);
     if (isnan(a) || isnan(b)) {
         sw |= 0x4500u; /* unordered: C3 C2 C0 */
@@ -1340,15 +1350,15 @@ RECOMP_HOT_INLINE void fcom_common(X86 *c, double a, double b, int quiet) {
         sw |= 0x4000u; /* C3 */
     c->fpu_sw = sw;
 }
-RECOMP_HOT_INLINE void fcom(X86 *c, double a, double b) {
+RECOMP_HOT_INLINE void fcom(X86 *RECOMP_NOESC c, double a, double b) {
     fcom_common(c, a, b, 0);
 }
-RECOMP_HOT_INLINE void fucom(X86 *c, double a, double b) {
+RECOMP_HOT_INLINE void fucom(X86 *RECOMP_NOESC c, double a, double b) {
     fcom_common(c, a, b, 1);
 }
 /* FCOMI/FUCOMI report into EFLAGS instead of the status word, with the same
  * split over which NaNs are quiet. */
-static inline void fcomi_common(X86 *c, double a, double b, int quiet) {
+static inline void fcomi_common(X86 *RECOMP_NOESC c, double a, double b, int quiet) {
     c->eflags_of = c->eflags_sf = c->eflags_af = 0;
     if (isnan(a) || isnan(b)) {
         c->eflags_zf = c->eflags_pf = c->eflags_cf = 1;
@@ -1360,20 +1370,20 @@ static inline void fcomi_common(X86 *c, double a, double b, int quiet) {
         c->eflags_cf = (a < b);
     }
 }
-static inline void fcomi(X86 *c, double a, double b) {
+static inline void fcomi(X86 *RECOMP_NOESC c, double a, double b) {
     fcomi_common(c, a, b, 0);
 }
-static inline void fucomi(X86 *c, double a, double b) {
+static inline void fucomi(X86 *RECOMP_NOESC c, double a, double b) {
     fcomi_common(c, a, b, 1);
 }
 
 /* FNSTSW/FSTSW: the architectural status word, with TOP injected. */
-static inline uint16_t fstsw(const X86 *c) {
+static inline uint16_t fstsw(const X86 *RECOMP_NOESC c) {
     return (uint16_t)((c->fpu_sw & (uint16_t)~0x3800u) | (uint16_t)(c->fpu_top << 11));
 }
 /* FXAM.  C1 is the sign bit (of a NaN too), and C3 C2 C0 encode the class:
  *   NaN 001, infinity 011, normal 010, zero 100, empty 101, denormal 110. */
-static inline void fxam(X86 *c) {
+static inline void fxam(X86 *RECOMP_NOESC c) {
     uint16_t sw = (uint16_t)(c->fpu_sw & (uint16_t)~0x4700u);
     double v = ST(c, 0);
     if (signbit(v))
@@ -1414,7 +1424,7 @@ static inline void fxam(X86 *c) {
  * representable 4503599627370497 into ...498.  For |v| >= 2^52 floor and ceil
  * are both v, so the tie branch returns v unchanged.
  */
-static inline double fround_cw(const X86 *c, double v) {
+static inline double fround_cw(const X86 *RECOMP_NOESC c, double v) {
     double lo, hi, dlo, dhi;
     switch ((c->fpu_cw >> 10) & 3u) {
     case 1:
@@ -1441,7 +1451,7 @@ static inline double fround_cw(const X86 *c, double v) {
  * nearest-even rounding is used for the significand, which is exact whenever
  * RC = 00; this binary only ever leaves RC = 00 across the CRT's ftol, whose
  * window between the two FLDCWs contains a single FISTP and no arithmetic. */
-static inline void x87_set_cw(X86 *c, uint16_t cw) {
+static inline void x87_set_cw(X86 *RECOMP_NOESC c, uint16_t cw) {
     c->fpu_cw = cw;
 }
 
@@ -1449,7 +1459,7 @@ static inline void x87_set_cw(X86 *c, uint16_t cw) {
  * extended precision, every exception masked), status clear, TOP = 0, every
  * register tagged empty.  The register values themselves are left alone, as
  * on hardware; the tags make them unreadable. */
-static inline void x87_finit(X86 *c) {
+static inline void x87_finit(X86 *RECOMP_NOESC c) {
     x87_set_cw(c, 0x037fu);
     c->fpu_sw = 0;
     c->fpu_top = 0;
@@ -1465,7 +1475,7 @@ static inline void x87_finit(X86 *c) {
 /* FNSTENV m28: the control, status and tag words, then the exception
  * pointers this model does not track, written as zero. Every exception is
  * masked afterwards, as on hardware; the register stack is untouched. */
-static inline void x87_fnstenv(X86 *c, uint32_t a) {
+static inline void x87_fnstenv(X86 *RECOMP_NOESC c, uint32_t a) {
     wr32(a, c->fpu_cw);
     wr32(a + 4, fstsw(c));
     wr32(a + 8, x87_tag_word(c));
@@ -1478,7 +1488,7 @@ static inline void x87_fnstenv(X86 *c, uint32_t a) {
 
 /* FLDENV m28: control word, status word with TOP, tag word. The registers
  * stay in their physical slots, so ST(i) follows the restored TOP. */
-static inline void x87_fldenv(X86 *c, uint32_t a) {
+static inline void x87_fldenv(X86 *RECOMP_NOESC c, uint32_t a) {
     uint16_t sw = rd16(a + 4);
     x87_set_cw(c, rd16(a));
     c->fpu_top = (sw >> 11) & 7u;
@@ -1486,7 +1496,7 @@ static inline void x87_fldenv(X86 *c, uint32_t a) {
     c->fpu_tag = rd16(a + 8);
 }
 
-static inline void x87_fnsave(X86 *c, uint32_t a) {
+static inline void x87_fnsave(X86 *RECOMP_NOESC c, uint32_t a) {
     unsigned i;
     wr32(a, c->fpu_cw);
     wr32(a + 4, fstsw(c));
@@ -1503,7 +1513,7 @@ static inline void x87_fnsave(X86 *c, uint32_t a) {
 /* FRSTOR m108: the inverse.  TOP comes out of the saved status word and the
  * eight registers go back into the physical slots that TOP implies, so a
  * later ST(i) reads what FNSAVE wrote as ST(i). */
-static inline void x87_frstor(X86 *c, uint32_t a) {
+static inline void x87_frstor(X86 *RECOMP_NOESC c, uint32_t a) {
     unsigned i;
     uint16_t sw = rd16(a + 4);
     x87_set_cw(c, rd16(a));
@@ -1516,7 +1526,7 @@ static inline void x87_frstor(X86 *c, uint32_t a) {
 
 /* FST/FSTP to a float, rounded per RC.  The host conversion rounds to
  * nearest; for the directed modes, step one ULP if it went the wrong way. */
-static inline float fto_float(const X86 *c, double v) {
+static inline float fto_float(const X86 *RECOMP_NOESC c, double v) {
     unsigned rc = (c->fpu_cw >> 10) & 3u;
     float f = (float)v;
     double back;
@@ -1535,21 +1545,21 @@ static inline float fto_float(const X86 *c, double v) {
 /* FIST/FISTP: round per the control word, and store the "integer indefinite"
  * when the value does not fit (NaN, infinity, out of range) exactly as x87
  * does with the invalid-operation exception masked, raising IE. */
-static inline int16_t fto_i16(X86 *c, double v) {
+static inline int16_t fto_i16(X86 *RECOMP_NOESC c, double v) {
     double r = fround_cw(c, v);
     if (r >= -32768.0 && r <= 32767.0)
         return (int16_t)r;
     c->fpu_sw |= 0x0001u;
     return INT16_MIN;
 }
-static inline int32_t fto_i32(X86 *c, double v) {
+static inline int32_t fto_i32(X86 *RECOMP_NOESC c, double v) {
     double r = fround_cw(c, v);
     if (r >= -2147483648.0 && r <= 2147483647.0)
         return (int32_t)r;
     c->fpu_sw |= 0x0001u;
     return INT32_MIN;
 }
-static inline int64_t fto_i64(X86 *c, double v) {
+static inline int64_t fto_i64(X86 *RECOMP_NOESC c, double v) {
     double r = fround_cw(c, v);
     if (r >= -9223372036854775808.0 && r < 9223372036854775808.0)
         return (int64_t)r;
@@ -1559,19 +1569,19 @@ static inline int64_t fto_i64(X86 *c, double v) {
 
 /* Integer stores use FILD's exact signed value until an arithmetic write.
  * Narrowing falls back to the ordinary conversion for masked overflow. */
-static inline int16_t fist_i16(X86 *c) {
+static inline int16_t fist_i16(X86 *RECOMP_NOESC c) {
     int64_t v = (int64_t)c->st_bits[c->fpu_top];
     if (c->st_exact[c->fpu_top] && v >= INT16_MIN && v <= INT16_MAX)
         return (int16_t)v;
     return fto_i16(c, ST(c, 0));
 }
-static inline int32_t fist_i32(X86 *c) {
+static inline int32_t fist_i32(X86 *RECOMP_NOESC c) {
     int64_t v = (int64_t)c->st_bits[c->fpu_top];
     if (c->st_exact[c->fpu_top] && v >= INT32_MIN && v <= INT32_MAX)
         return (int32_t)v;
     return fto_i32(c, ST(c, 0));
 }
-static inline int64_t fist_i64(X86 *c) {
+static inline int64_t fist_i64(X86 *RECOMP_NOESC c) {
     if (c->st_exact[c->fpu_top])
         return (int64_t)c->st_bits[c->fpu_top];
     return fto_i64(c, ST(c, 0));
@@ -1601,7 +1611,7 @@ static inline unsigned fprem_low_bits(double A, double B) {
     return (unsigned)(n & 7);
 }
 
-static inline void fprem_flags(X86 *c, unsigned bits, int incomplete) {
+static inline void fprem_flags(X86 *RECOMP_NOESC c, unsigned bits, int incomplete) {
     uint16_t sw = (uint16_t)(c->fpu_sw & (uint16_t)~0x4700u);
     if (incomplete) {
         sw |= 0x0400u; /* C2: reduction not finished */
@@ -1616,7 +1626,7 @@ static inline void fprem_flags(X86 *c, unsigned bits, int incomplete) {
     c->fpu_sw = sw;
 }
 
-static inline double fprem_common(X86 *c, double a, double b, int ieee) {
+static inline double fprem_common(X86 *RECOMP_NOESC c, double a, double b, int ieee) {
     double A, B, r;
     int ea, eb;
     if (b == 0.0 || isnan(a) || isnan(b) || isinf(a)) {
@@ -1857,7 +1867,7 @@ static inline double fxtract_significand(double v) {
     return scalbn(v, -ilogb(v)); /* in [1, 2) */
 }
 
-static inline void xlat(X86 *c) {
+static inline void xlat(X86 *RECOMP_NOESC c) {
     c->r[R_EAX] = (c->r[R_EAX] & 0xffffff00u) | rd8(c->r[R_EBX] + (c->r[R_EAX] & 0xffu));
 }
 static inline uint32_t bswap32(uint32_t v) {
