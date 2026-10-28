@@ -85,6 +85,22 @@ addToLibrary({
       return {entry: entry, blocksCfg: manifest.blocks};
     }
 
+    // recomp-kit: the blocks held in memory, least recently read first, at most maxBlocks of them
+    // for the whole page. Holding every block for the session took Safari's page process past what
+    // an iPhone allows; a dropped block is read again from the browser's HTTP cache (block
+    // addresses are immutable). ponytail: a count cap (64 MiB of 1 MiB blocks), bytes if blocks vary.
+    var maxBlocks = 64;
+    var held = (wasmFS$streamState.held ??= new Map());
+    function touch(file, rec, k) {
+      var key = file + '#' + k;
+      held.delete(key);
+      held.set(key, [rec, k]);
+      if (held.size <= maxBlocks) return;
+      var [oldest, [r, j]] = held.entries().next().value;
+      held.delete(oldest);
+      delete r.blocks[j];
+    }
+
     // recomp-kit: the contract address for block k of a manifest entry.
     function blockUrl(entry, blocksCfg, k) {
       var path = entry.p.split('/').map(encodeURIComponent).join('/');
@@ -109,8 +125,10 @@ addToLibrary({
             var expected = Math.min(blockSize, entry.s - k * blockSize);
             if (bytes.byteLength !== expected) throw {status: 502};
             rec.blocks[k] = bytes;
+            touch(file, rec, k);
           })();
-          rec.inflight[k] = p.finally(() => { if (rec.inflight[k] === p) delete rec.inflight[k]; });
+          var q = p.finally(() => { if (rec.inflight[k] === q) delete rec.inflight[k]; });
+          rec.inflight[k] = q;
         });
         await Promise.all(batch.map((k) => rec.inflight[k]));
       }
@@ -127,18 +145,28 @@ addToLibrary({
       var blockSize = blocksCfg.size;
       var firstBlock = (offset / blockSize) | 0;
       var lastBlock = ((offset + length - 1) / blockSize) | 0;
-      var indexes = [];
-      for (var k = firstBlock; k <= lastBlock; k++) indexes.push(k);
-      await ensureBlocks(file, entry, blocksCfg, indexes);
-      var blocks = wasmFS$streamState.files[file].blocks;
+      // 8 blocks at a time, copied before the next 8 are fetched, so a read larger than the block
+      // cache never needs all its blocks held at once. A failure part way leaves the earlier
+      // windows copied; the read still fails as a whole.
+      var rec = wasmFS$streamState.files[file];
       var readLength = 0;
-      for (var i = firstBlock; i <= lastBlock; i++) {
-        var block = blocks[i];
-        var start = Math.max(i * blockSize, offset);
-        var blockStart = i * blockSize;
-        var end = Math.min(blockStart + blockSize, offset + length);
-        HEAPU8.set(block.subarray(start - blockStart, end - blockStart), buffer + (start - offset));
-        readLength = end - offset;
+      for (var w = firstBlock; w <= lastBlock; w += 8) {
+        var indexes = [];
+        for (var k = w; k <= Math.min(w + 7, lastBlock); k++) indexes.push(k);
+        // Taken after the wait, as other reads may have dropped one of these meanwhile: fetch again.
+        var got;
+        for (var tries = 0; (got = indexes.map((k) => rec.blocks[k])).includes(undefined); tries++) {
+          if (tries === 4) throw {status: 503};
+          await ensureBlocks(file, entry, blocksCfg, indexes);
+        }
+        indexes.forEach((k) => touch(file, rec, k));
+        for (var i = 0; i < indexes.length; i++) {
+          var blockStart = indexes[i] * blockSize;
+          var start = Math.max(blockStart, offset);
+          var end = Math.min(blockStart + blockSize, offset + length);
+          HEAPU8.set(got[i].subarray(start - blockStart, end - blockStart), buffer + (start - offset));
+          readLength = end - offset;
+        }
       }
       return readLength;
     }

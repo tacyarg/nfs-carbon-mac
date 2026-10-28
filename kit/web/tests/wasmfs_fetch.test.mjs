@@ -145,14 +145,14 @@ function loadLibrary(server, { heapSize = 64 * 1024 * 1024 } = {}) {
   };
   vm.createContext(sandbox);
   vm.runInContext(LIBRARY_SOURCE, sandbox, { filename: 'wasmfs_fetch.js' });
-  return { captured, HEAPU8, backends: sandbox.wasmFS$backends };
+  return { captured, HEAPU8, backends: sandbox.wasmFS$backends, state: sandbox.wasmFS$streamState };
 }
 
 async function makeBackend(server, opts) {
   const lib = loadLibrary(server, opts);
   const backendId = 1;
   await lib.captured._wasmfs_create_fetch_backend_js(backendId);
-  return { backend: lib.backends[backendId], HEAPU8: lib.HEAPU8 };
+  return { backend: lib.backends[backendId], HEAPU8: lib.HEAPU8, state: lib.state };
 }
 
 function fileFor(path) { return `/data/${path}`; }
@@ -272,4 +272,36 @@ test('the last block of a file shorter than 1 MiB is accepted at its true length
   const len = await backend.read(fileFor(path), buffer, size, 0);
   assert.equal(len, size);
   assert.deepEqual(HEAPU8.subarray(buffer, buffer + size), server.contents[path]);
+});
+
+test('the block cache holds at most 64 blocks, dropping the least recently read', async () => {
+  // Every block used to stay in memory for the whole session; Safari's page process grew past
+  // what an iPhone allows and was killed while booting. A dropped block is read again from the
+  // browser's HTTP cache (block addresses are immutable).
+  const path = 'TRACKS/STREAML5RA.BUN';
+  const server = makeServer({ listed: { [path]: { size: 70 * BLOCK_SIZE, mtime: 9 } } });
+  const { backend, HEAPU8, state } = await makeBackend(server);
+  const blockReqs = (b) => server.requests.filter((r) => r.path === `/data-blocks/v2/${path}` && new URLSearchParams(r.search).get('b') === String(b)).length;
+  for (let b = 0; b < 70; b++) {
+    assert.equal(await backend.read(fileFor(path), 0, BLOCK_SIZE, b * BLOCK_SIZE), BLOCK_SIZE);
+    if (b === 40) await backend.read(fileFor(path), 0, 16, 0); // block 0 read again: recent now
+  }
+  assert.equal(state.files[fileFor(path)].blocks.filter(Boolean).length, 64);
+  assert.equal(await backend.read(fileFor(path), 0, BLOCK_SIZE, 0), BLOCK_SIZE);
+  assert.equal(blockReqs(0), 1, 'a block read again stays held');
+  assert.equal(await backend.read(fileFor(path), 0, BLOCK_SIZE, BLOCK_SIZE), BLOCK_SIZE);
+  assert.equal(blockReqs(1), 2, 'the least recently read block was dropped and is fetched again');
+  assert.deepEqual(HEAPU8.subarray(0, BLOCK_SIZE), server.contents[path].subarray(BLOCK_SIZE, 2 * BLOCK_SIZE));
+});
+
+test('a single read larger than the block cache returns exact bytes', async () => {
+  // Carbon reads some files in one call bigger than the cache; holding all of a read's blocks at
+  // once made that read fail and the game recurse until the stack overflowed.
+  const path = 'GLOBAL/GLOBALB.BUN';
+  const size = 100 * BLOCK_SIZE + 123;
+  const server = makeServer({ listed: { [path]: { size, mtime: 3 } } });
+  const { backend, HEAPU8 } = await makeBackend(server, { heapSize: 128 * 1024 * 1024 });
+  assert.equal(await backend.read(fileFor(path), 16, size, 0), size);
+  assert.deepEqual(HEAPU8.subarray(16, 16 + size), server.contents[path]);
+  assert.ok(server.peakBlocks <= 8);
 });
