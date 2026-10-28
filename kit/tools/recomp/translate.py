@@ -1773,12 +1773,125 @@ def noreturn_callees_from(parsed, iat_names, image=None):
     return out
 
 
+# X87OPT, after nfsu2-web tools/lift.py X87Region (MIT, Copyright (c) 2026 th0mk).
+X87_ST = re.compile(r"\bST\(c, (\d)\)")
+X87_PUSH = re.compile(r"^(\s*)fpush\(c, (.*)\);(\s*/\*.*\*/)?$")
+X87_SET = re.compile(r"^(\s*)fset\(c, (\d), (.*)\);(\s*/\*.*\*/)?$")
+X87_DROP = re.compile(r"^(\s*)(?:fdrop\(c\);\s*)+(/\*.*\*/)?$")
+# Helpers an x87 line may pass c that leave st, fpu_top, the tags and the exact flags alone.
+X87_PURE = {"ST", "fpush", "fset", "fdrop", "fx87", "fx87_exact", "fto_float", "fdivz",
+            "fcom", "fucom", "fcomi", "fucomi", "fround_cw"}
+# A line that ends a run: a transfer, or a helper that may read the x87 state through c.
+X87_BOUNDARY = re.compile(r"\(c[,)]|\breturn\b|\bgoto\b|_FN2?\(|\bICALL\(|c->(st|fpu_)")
+
+
+class X87Region(object):
+    """Within a straight run of x87 instructions the stack depth is static, so ST(i) is
+    the local x_[k + 8], k being the slot relative to fpu_top at the start of the run
+    (T_).  close() stores what the per-op helpers would have left: every written slot
+    (popped ones too, so FNSAVE's image does not change), st_bits and st_exact, the
+    last tag, and fpu_top once."""
+
+    def __init__(self):
+        self.used = False
+        self.reset()
+
+    def reset(self):
+        self.active = False
+        self.off = 0
+        self.wr, self.ld, self.tag = set(), set(), {}
+        self.lo = self.hi = None
+
+    def slot(self, k):
+        lo = k if self.lo is None else min(self.lo, k)
+        hi = k if self.hi is None else max(self.hi, k)
+        if hi - lo > 7 or not -8 <= k <= 7:
+            raise ValueError("two slots would name one register")
+        self.lo, self.hi = lo, hi
+        return k
+
+    @staticmethod
+    def phys(k):
+        return "(T_ %s %du) & 7u" % ("-" if k < 0 else "+", abs(k))
+
+    def translate(self, lines):
+        """One x87 instruction's lines inside the run, or None: emit them raw after close()."""
+        text = "\n".join(lines)
+        if ("c->st" in text or "c->fpu_" in text
+                or any(f not in X87_PURE for f in re.findall(r"\b(\w+)\(c[,)]", text))):
+            return None
+        saved = (self.off, set(self.wr), set(self.ld), dict(self.tag), self.lo, self.hi)
+        pre, out = [], []
+
+        def st(m):
+            k = self.slot(self.off + int(m.group(1)))
+            if k not in self.wr and k not in self.ld:
+                pre.append("x_[%d] = c->st[%s];" % (k + 8, self.phys(k)))
+                self.ld.add(k)
+            return "x_[%d]" % (k + 8)
+        try:
+            for line in lines:
+                m = X87_DROP.match(line)
+                if m:
+                    for _ in range(line.count("fdrop")):
+                        self.tag[self.slot(self.off)] = "FTAG_EMPTY"
+                        self.off += 1
+                    if m.group(2):
+                        out.append(m.group(1) + m.group(2))
+                    continue
+                m = X87_PUSH.match(line)
+                if m:
+                    v = X87_ST.sub(st, m.group(2))
+                    self.off -= 1
+                    k = self.slot(self.off)
+                    self.wr.add(k)
+                    self.tag[k] = "FTAG_VALID"
+                    out.append("%sx_[%d] = %s;%s" % (m.group(1), k + 8, v, m.group(3) or ""))
+                    continue
+                m = X87_SET.match(line)
+                if m:
+                    v = X87_ST.sub(st, m.group(3))
+                    k = self.slot(self.off + int(m.group(2)))
+                    self.wr.add(k)
+                    out.append("%sx_[%d] = %s;%s" % (m.group(1), k + 8, v, m.group(4) or ""))
+                    continue
+                out.append(X87_ST.sub(st, line))
+            if any(re.search(r"\bf(push|set|drop)\(c\b", line) for line in out):
+                raise ValueError("a stack op this pass cannot rewrite")
+        except ValueError:
+            (self.off, self.wr, self.ld, self.tag, self.lo, self.hi) = saved
+            return None
+        # One line, so the instruction's own comment stays first (the entry check reads it).
+        lead = ([] if self.active else ["T_ = c->fpu_top;"]) + pre
+        self.active = self.used = True
+        if lead:
+            out[:1] = [" ".join(lead + out[:1])]
+        return out
+
+    def close(self):
+        if not self.active:
+            return []
+        out = []
+        for k in sorted(self.wr | set(self.tag)):
+            p = self.phys(k)
+            if k in self.wr:
+                out.append("c->st[%s] = x_[%d]; c->st_bits[%s] = 0;" % (p, k + 8, p))
+            out.append("c->st_exact[%s] = 0;" % p)
+            if k in self.tag:
+                out.append("ftag_put(c, %s, %s);" % (p, self.tag[k]))
+        if self.off:
+            out.append("c->fpu_top = %s;" % self.phys(self.off))
+        self.reset()
+        return out
+
+
 class Translator(object):
     def __init__(self, image, func_addrs, opts):
         self.image = image
         self.func_addrs = func_addrs      # set of all known function entry points
         self.opts = opts
         self.flag_abi = None              # (live_in, flags_out) from flag_abi_table, or None
+        self.x87opt = False               # X87OPT: x87 runs in locals (X87Region)
         self.stats = defaultdict(int)
         # Instructions replaced by a trap because this translator cannot model
         # them. Reported at the end of a run: a listing decoding data as code
@@ -2904,12 +3017,24 @@ class Translator(object):
             if head:
                 out.append("    goto L_%08x;" % fn.addr)
         prologue = len(out)          # everything emitted so far is dispatch
+        xr = X87Region()
+
+        def close():
+            if self.x87opt:
+                out.extend("    " + line for line in xr.close())
         for i, ins in enumerate(fn.insns):
             if i in dead:
                 continue
             if ins.addr in labels:
+                close()
                 out.append("L_%08x: ;" % ins.addr)
             body = self.emit(fn, i, live_out[i])
+            if self.x87opt:
+                new = xr.translate(body) if ins.mnem.startswith("F") else None
+                if new is not None:
+                    body = new
+                elif ins.mnem.startswith("F") or any(X87_BOUNDARY.search(line) for line in body):
+                    close()
             for line in body:
                 out.append("    " + line)
             # An INT3 the listing ran into is MSVC's padding between
@@ -2921,10 +3046,12 @@ class Translator(object):
                 self.stats["_listing_gap"] += 1
                 self.notes.append(
                     "%08x: listing gap, %s falls through to %08x" % (ins.addr, ins.mnem, t))
+                close()
                 for line in self.goto_target(fn, t, ins):
                     out.append("    " + line)
         # A function whose last listed instruction is not a terminator falls
         # through into the next function.
+        close()
         last_i = max(i for i in range(len(fn.insns)) if i not in dead)
         last = fn.insns[last_i]
         if (last.mnem not in TERMINATORS and last.mnem != "INT3"
@@ -2947,6 +3074,8 @@ class Translator(object):
                     "fn_%08x starts at %08x, not at its own address; prologue "
                     "was %s" % (fn.addr, fn.insns[0].addr,
                                 " | ".join(l.strip() for l in out[:prologue])))
+        if xr.used:
+            out.insert(1, "    uint32_t T_; double x_[16];")
         out.append("}")
         if entries:
             out.append("void fn_%08x(X86 *restrict c) { body_%08x(c, 0u); }" % (fn.addr, fn.addr))
@@ -4266,6 +4395,8 @@ def main():
     ap.add_argument("--only", nargs="*", default=None)
     ap.add_argument("--eager-flags", action="store_true",
                     help="compute every flag at every instruction (debug)")
+    ap.add_argument("--no-x87opt", action="store_true",
+                    help="keep the x87 stack in the CPU struct per instruction (no X87Region)")
     ap.add_argument("--no-flag-abi", action="store_true",
                     help="keep every flag live at calls and returns (no whole-program table)")
     ap.add_argument("--check-flags", action="store_true",
@@ -5558,6 +5689,7 @@ def main():
     for t, fn in extra.items():
         entries_by_fn[fn.addr].add(t)
 
+    tr.x87opt = not args.no_x87opt
     if not (args.eager_flags or args.no_flag_abi or args.only):
         failed = {a for a, _ in failures}
         flag_abi_table(tr, [fn for fn in parsed if fn.addr not in failed], entries_by_fn)
@@ -5887,7 +6019,7 @@ def main():
         # execute a guest instruction or modify its CPU. The first guest operation
         # must still reach ADDR.
         while lines and lines[0].strip() in ("uint64_t seh_mark_ = recomp_seh_frame_mark(c);",
-                                             "RECOMP_PREEMPT();"):
+                                             "RECOMP_PREEMPT();", "uint32_t T_; double x_[16];"):
             lines = lines[1:]
         if not lines:
             continue

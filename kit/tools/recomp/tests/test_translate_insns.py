@@ -472,6 +472,12 @@ CASES = [
           (0x17, "FSTP double ptr [ESP + 0x1c]"), (0x1b, "RET")],
          "D9 E8  DD 44 24 04  9B DD 71 08  D9 E8  DD 5C 24 0C  DD 61 08  DD 5C 24 14  DD 5C 24 1C  C3",
          fsave_setup, ignore=((SCRATCH + 0x1000 + 8 + 12, 16),), check=check_fsave),
+    Case("an x87 run kept in locals leaves the FSAVE image the per-op helpers leave", 0x0D02FD00,
+         [(0x0, "FLD1"), (0x2, "FLD double ptr [ESP + 0x4]"), (0x6, "FADD ST0,ST1"),
+          (0x8, "FSTP double ptr [ESP + 0xc]"), (0xc, "FLD1"), (0xe, "FMUL ST0,ST1"),
+          (0x10, "FADDP ST1,ST0"), (0x12, "FSAVE [ECX + 0x8]"), (0x16, "RET")],
+         "D9 E8  DD 44 24 04  D8 C1  DD 5C 24 0C  D9 E8  D8 C9  DE C1  9B DD 71 08  C3",
+         fsave_setup, ignore=((SCRATCH + 0x1000 + 8 + 12, 16),)),
     Case("PUSHF and POPF move the low 16 flag bits through the stack", 0x0D01E000,
          [(0x0, "STC"), (0x1, "PUSHF"), (0x3, "POP AX"), (0x5, "CLC"), (0x6, "PUSH AX"),
           (0x8, "POPF"), (0xa, "SETC BL"), (0xd, "RET")],
@@ -697,6 +703,7 @@ class Opts(object):
 def translate_case(case):
     """The emitted C for one case, or the TranslateError it raised."""
     tr = T.Translator(NoImage(case), {a for c in CASES for a in (c.addr,) + c.entries}, Opts())
+    tr.x87opt = True
     insns = T.parse_listing_text(case.listing())
     fn = T.Function(case.addr, case.name, len(case.code), insns)
     fn.measure(NoImage())
