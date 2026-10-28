@@ -1778,6 +1778,7 @@ class Translator(object):
         self.image = image
         self.func_addrs = func_addrs      # set of all known function entry points
         self.opts = opts
+        self.flag_abi = None              # (live_in, flags_out) from flag_abi_table, or None
         self.stats = defaultdict(int)
         # Instructions replaced by a trap because this translator cannot model
         # them. Reported at the end of a run: a listing decoding data as code
@@ -2217,6 +2218,120 @@ class Translator(object):
             d, u = flag_effect(fn.insns[i + 1])
             live_out[i] = (live_out[i + 1] - d) | u
         return live_out
+
+    def flow_setup(self, fn, entries):
+        """The flow facts translate and flag_abi_table share; returns the
+        entries that are instructions of this body.
+
+        An alternate entry must be an instruction in THIS body.  A block can
+        be re-recovered between the discovery rounds and the final pass -
+        recursive descent makes them grow - so an entry registered against
+        an earlier, shorter version has to be dropped rather than emitted as
+        a goto to a label that was never placed."""
+        fn.index = {ins.addr: k for k, ins in enumerate(fn.insns)}
+        fn.pushed_continuations = self.live_continuations(fn)
+        dropped = [e for e in entries if e not in fn.index]
+        if dropped:
+            self.stale_entries.update(dropped)
+            entries = [e for e in entries if e in fn.index]
+        fn.return_jumps = self.popped_return_jumps(fn, entries)
+        fn.seh_escapes = self.seh_escaping_returns(fn)
+        return entries
+
+    def liveness_abi(self, fn, entries=()):
+        """CFG-wide flag liveness under the MSVC calling convention.
+
+        No callee reads its caller's flags and no caller reads a callee's,
+        except where the whole-program table self.flag_abi = (live_in,
+        flags_out) says so: live_in maps each function entry to the flags it
+        reads before writing them, flags_out holds the functions whose flags a
+        caller reads after they return.  A jump that may land in the
+        interpreter keeps every flag: it runs the target from the struct.
+
+        Returns live_out per instruction, live_in per entry, the callees whose
+        flags are read after a direct call, the functions this body tail-jumps
+        to when it returns flags itself, and the indirect calls whose flags
+        are read after them."""
+        table, flags_out = self.flag_abi
+        n = len(fn.insns)
+        ret = ALL_FLAGS if any(a in flags_out for a in [fn.addr] + list(entries)) else NO_FLAGS
+        succ = [self.successors(fn, i) for i in range(n)]
+        out = [NO_FLAGS] * n                 # live where insn i leaves the body
+        tails, unknown = set(), []
+
+        def leave(i, t):
+            if t in fn.index:
+                succ[i].append(fn.index[t])
+            elif t in self.func_addrs:
+                tails.add(t)
+                out[i] = table.get(t, ALL_FLAGS)
+            else:
+                out[i] = ALL_FLAGS           # recomp_jump: the interpreter runs it from the struct
+
+        for i, ins in enumerate(fn.insns):
+            m = ins.mnem
+            if m == "RET" or i in fn.return_jumps:
+                out[i] = ret
+                continue
+            if m == "INT3":
+                continue                     # padding: nothing runs it
+            if m == "JMP" or m in JCC:
+                t = self.branch_target(ins)
+                if t is None and m == "JMP":
+                    # A jump to another function's entry (MSVC ends many
+                    # methods with JMP dword ptr [EAX + n]), which reads no
+                    # flags.  successors() lets a table-less one land anywhere
+                    # in the body; for flags it does not (nfsu2-web's rule too),
+                    # and a recovered table keeps its own targets.  If our
+                    # caller reads our flags, the target cannot be told.
+                    if not self.jumptables.get((fn.addr, ins.addr)):
+                        succ[i] = []
+                    if ret:
+                        unknown.append(ins.addr)
+                    continue
+                if t is not None and t not in fn.index:
+                    leave(i, t)
+                if m == "JMP":
+                    continue
+            if i + 1 >= n or not fn.contiguous[i]:
+                # The emitter adds a goto or a tail call to where the
+                # instruction really ends.
+                f = fn.fallthrough[i]
+                if f is None and i + 1 >= n:
+                    f = fn.end
+                if f is None:
+                    out[i] = ALL_FLAGS
+                else:
+                    leave(i, f)
+        live_in = [NO_FLAGS] * n
+        live_out = [NO_FLAGS] * n
+        changed = True
+        while changed:
+            changed = False
+            for i in range(n - 1, -1, -1):
+                ins = fn.insns[i]
+                lo = out[i]
+                for j in succ[i]:
+                    lo = lo | live_in[j]
+                if ins.mnem == "CALL":
+                    t = self.branch_target(ins)
+                    li = table.get(t, ALL_FLAGS) if t in self.func_addrs else NO_FLAGS
+                else:
+                    d, u = flag_effect(ins)
+                    li = (lo - d) | u
+                if li != live_in[i] or lo != live_out[i]:
+                    live_in[i], live_out[i] = li, lo
+                    changed = True
+        ent = {a: live_in[fn.index[a]] for a in [fn.addr] + list(entries) if a in fn.index}
+        after, indirect = set(), unknown
+        for i, ins in enumerate(fn.insns):
+            if ins.mnem == "CALL" and live_out[i] and not self.never_returns(ins):
+                t = self.branch_target(ins)
+                if t in self.func_addrs:
+                    after.add(t)
+                else:
+                    indirect.append(ins.addr)
+        return live_out, ent, after, (tails if ret else set()), indirect
 
     def liveness_cfg(self, fn, call_transparent=False):
         """CFG-wide liveness, used only by --check-flags to measure how often
@@ -2698,22 +2813,18 @@ class Translator(object):
         of those, the body becomes `static void body_ADDR(X86 *, uint32_t)`
         preceded by a dispatch switch, and every entry is a three-line wrapper,
         so no code is duplicated."""
-        entries = sorted(set(entries))
-        # An alternate entry must be an instruction in THIS body.  A block can
-        # be re-recovered between the discovery rounds and the final pass -
-        # recursive descent makes them grow - so an entry registered against
-        # an earlier, shorter version has to be dropped rather than emitted as
-        # a goto to a label that was never placed.
-        fn.index = {ins.addr: k for k, ins in enumerate(fn.insns)}
-        fn.pushed_continuations = self.live_continuations(fn)
-        dropped = [e for e in entries if e not in fn.index]
-        if dropped:
-            self.stale_entries.update(dropped)
-            entries = [e for e in entries if e in fn.index]
-        fn.return_jumps = self.popped_return_jumps(fn, entries)
-        fn.seh_escapes = self.seh_escaping_returns(fn)
+        entries = self.flow_setup(fn, sorted(set(entries)))
         if self.opts.eager_flags:
             live_out = [ALL_FLAGS] * len(fn.insns)
+        elif self.flag_abi is not None:
+            live_out, ent, after, tails, indirect = self.liveness_abi(fn, entries)
+            table, flags_out = self.flag_abi
+            # A body re-translated after the table was built (it grew) must not
+            # read more than its callers were told, nor read flags the table
+            # lets a callee drop.  Such a body is left to the interpreter.
+            if (indirect or not (set(after) | set(tails)) <= flags_out
+                    or any(not v <= table.get(a, ALL_FLAGS) for a, v in ent.items())):
+                raise TranslateError("its flags flow differently than when the flag table was built")
         else:
             live_out = self.liveness(fn)
         dead = self.dead_after_noreturn(fn, entries)
@@ -4155,6 +4266,8 @@ def main():
     ap.add_argument("--only", nargs="*", default=None)
     ap.add_argument("--eager-flags", action="store_true",
                     help="compute every flag at every instruction (debug)")
+    ap.add_argument("--no-flag-abi", action="store_true",
+                    help="keep every flag live at calls and returns (no whole-program table)")
     ap.add_argument("--check-flags", action="store_true",
                     help="report flags that would cross CALL/RET boundaries")
     ap.add_argument("--report", default=None, help="write a JSON stats file")
@@ -5445,6 +5558,10 @@ def main():
     for t, fn in extra.items():
         entries_by_fn[fn.addr].add(t)
 
+    if not (args.eager_flags or args.no_flag_abi or args.only):
+        failed = {a for a, _ in failures}
+        flag_abi_table(tr, [fn for fn in parsed if fn.addr not in failed], entries_by_fn)
+
     bodies = {}
     for fn in parsed:
         if fn.addr in [a for a, _ in failures]:
@@ -6300,6 +6417,56 @@ void recomp_unknown_jump(X86 *c, uint32_t target)
                 "notes": tr.notes[:200],
             }, fh, indent=1)
     return 1 if failures else 0
+
+
+def flag_abi_table(tr, fns, entries_by_fn, rounds=32):
+    """Whole-program flag liveness across calls and returns (FLAGABI, ported
+    from nfsu2-web's tools/flagabi.py, MIT, Copyright (c) 2026 th0mk).
+
+    The least fixed point: every entry starts reading no flags and nobody
+    returning flags, and each round re-runs liveness_abi over every body until
+    nothing grows.  Sets tr.flag_abi; leaves it None (every flag live at calls
+    and returns, as before) when the rounds run out or a caller reads the
+    flags an indirect call left, which MSVC code never does."""
+    live_in, flags_out, work = {}, set(), []
+    for fn in fns:
+        try:
+            ents = tr.flow_setup(fn, sorted(entries_by_fn.get(fn.addr, ())))
+        except Exception:                       # noqa: BLE001 - not lifted; callers see ALL_FLAGS
+            continue
+        work.append((fn, ents))
+        for a in [fn.addr] + ents:
+            live_in[a] = NO_FLAGS
+    tr.flag_abi = (live_in, flags_out)
+    for _ in range(rounds):
+        changed, indirect = False, []
+        for fn, ents in work:
+            try:
+                _, ent, after, tails, ind = tr.liveness_abi(fn, ents)
+            except Exception:                   # noqa: BLE001 - assume the worst for it
+                ent, after, tails, ind = {a: ALL_FLAGS for a in [fn.addr] + ents}, (), (), []
+            for a, v in ent.items():
+                if not v <= live_in[a]:
+                    live_in[a] = live_in[a] | v
+                    changed = True
+            for t in list(after) + list(tails):
+                if t not in flags_out:
+                    flags_out.add(t)
+                    changed = True
+            indirect.extend(ind)
+        if not changed:
+            break
+    else:
+        print("flag ABI off: no fixed point after %d rounds" % rounds)
+        tr.flag_abi = None
+        return
+    if indirect:
+        print("flag ABI off: flags read after %d indirect call(s): %s"
+              % (len(indirect), " ".join("%08x" % a for a in indirect[:20])))
+        tr.flag_abi = None
+        return
+    print("flag ABI: %d bodies, %d entries read flags, %d functions return flags"
+          % (len(work), sum(1 for v in live_in.values() if v), len(flags_out)))
 
 
 def check_flags(tr, parsed):
