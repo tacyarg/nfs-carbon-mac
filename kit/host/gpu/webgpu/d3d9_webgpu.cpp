@@ -554,10 +554,8 @@ class WebGpuRenderer final : public D9Backend {
         memcpy(b.shadow.data() + offset, bytes, size);
         const uint64_t need = (total + 3) & ~3u;
         if (!b.buffer || wgpuBufferGetSize(b.buffer) < need) {
-            if (b.buffer) {
-                wgpuBufferRelease(b.buffer);
-                forget_buffers();
-            }
+            if (b.buffer)
+                retire(b.buffer);
             b.buffer = make_buffer(std::max<uint64_t>(need, 4),
                                    WGPUBufferUsage_Vertex | WGPUBufferUsage_Index);
             write_padded(b.buffer, 0, b.shadow.data(), b.shadow.size());
@@ -570,8 +568,7 @@ class WebGpuRenderer final : public D9Backend {
             // the pass goes on. Carbon rewrites one 23 KB buffer ~5 times a frame: 6 submits became 1.
             // ponytail: a buffer over 1 MB still submits; pool the renamed buffers if that ever shows.
             if (need <= (1u << 20) && !recomp_ab::old(recomp_ab::RENAME)) {
-                wgpuBufferRelease(b.buffer);
-                forget_buffers();
+                retire(b.buffer);
                 b.buffer = make_buffer(std::max<uint64_t>(need, 4),
                                        WGPUBufferUsage_Vertex | WGPUBufferUsage_Index);
                 write_padded(b.buffer, 0, b.shadow.data(), b.shadow.size());
@@ -586,10 +583,8 @@ class WebGpuRenderer final : public D9Backend {
         auto it = buffers_.find(id);
         if (it == buffers_.end())
             return;
-        if (it->second.buffer) {
-            wgpuBufferRelease(it->second.buffer);
-            forget_buffers();
-        }
+        if (it->second.buffer)
+            retire(it->second.buffer);
         buffers_.erase(it);
     }
 
@@ -1301,6 +1296,14 @@ class WebGpuRenderer final : public D9Backend {
         flush_ring(vertex_ring_);
         wgpuQueueSubmit(queue_, 1, &cb);
         wgpuCommandBufferRelease(cb);
+        if (!retired_.empty())
+            dev_->after_submitted([bufs = std::move(retired_)]() {
+                for (WGPUBuffer b : bufs) {
+                    wgpuBufferDestroy(b);
+                    wgpuBufferRelease(b);
+                }
+            });
+        retired_.clear();
         if (readback)
             read_queries(serial_, readback, nq, resolve, qs);
         else if (qs)
@@ -1368,8 +1371,11 @@ class WebGpuRenderer final : public D9Backend {
                     }
                     slots.resize(keep);
                 }
+                wgpuBufferDestroy(j->readback);
                 wgpuBufferRelease(j->readback);
+                wgpuBufferDestroy(j->resolve);
                 wgpuBufferRelease(j->resolve);
+                wgpuQuerySetDestroy(j->qs);
                 wgpuQuerySetRelease(j->qs);
                 delete j;
             });
@@ -2298,6 +2304,14 @@ class WebGpuRenderer final : public D9Backend {
         es_.ib_off = off;
         es_.ib_size = size;
     }
+    // A replaced or dropped buffer may still be read by commands recorded since the last submit, so
+    // it is destroyed once the next submit's work is done. Only releasing it left the GPU memory to
+    // the page's garbage collector: Safari collects late, and Carbon renames a buffer several times
+    // a frame, so its page process reached 18-21 GB and an iPhone killed it while booting.
+    void retire(WGPUBuffer b) {
+        retired_.push_back(b);
+        forget_buffers();
+    }
     void forget_buffers() {
         std::fill(std::begin(es_.vb), std::end(es_.vb), nullptr);
         es_.ib = nullptr;
@@ -2331,6 +2345,7 @@ class WebGpuRenderer final : public D9Backend {
     int pass_slot_ = -1;
     EncoderState es_;
     WGPUQuerySet query_set_ = nullptr;
+    std::vector<WGPUBuffer> retired_;
     uint32_t queries_used_ = 0;
 
     bool scale_chosen_ = false;
