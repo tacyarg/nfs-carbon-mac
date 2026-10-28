@@ -780,6 +780,8 @@ FLAG_EFFECT = {
     "BSR": (frozenset(("zf",)), NO_FLAGS),
     "BSF": (frozenset(("zf",)), NO_FLAGS),
     "SAHF": (frozenset(("cf", "pf", "af", "zf", "sf")), NO_FLAGS),
+    "LAHF": (NO_FLAGS, frozenset(("cf", "pf", "af", "zf", "sf"))),
+    "CMC": (frozenset(("cf",)), frozenset(("cf",))),
     "POPFD": (ALL_FLAGS, NO_FLAGS),
     "PUSHFD": (NO_FLAGS, ALL_FLAGS),
     "POPF": (ALL_FLAGS, NO_FLAGS),

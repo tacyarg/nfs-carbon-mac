@@ -649,6 +649,16 @@ CASES += [
 ]
 
 
+CASES += [
+    # LAHF reads the five flags the CMP left; the XOR after it rewrites them all,
+    # so a liveness table that says LAHF reads nothing drops the CMP's flags.
+    Case("LAHF keeps the flags of the CMP before it", 0x0D02FE00,
+         [(0, "CMP EAX,EBX"), (2, "LAHF"), (3, "XOR ECX,ECX"), (5, "RET")],
+         "39d8 9f 31c9 c3",
+         lambda rng: {"regs": rand_regs(rng)}),
+]
+
+
 # -------------------------------------------------------------- translate --
 
 class NoImage(object):
