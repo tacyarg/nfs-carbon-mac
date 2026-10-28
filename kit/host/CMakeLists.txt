@@ -294,15 +294,21 @@ if(TARGET recomp_gen)
     # Function names but no DWARF in the module players download: DWARF was 395 MB of its 526 MB.
     # Only -g0 undoes the Release -g (a later -g2 keeps DWARF), and it drops names too.
     target_link_options(recomp_app PRIVATE -g0 --profiling-funcs)
+    # Memory a phone's Safari can afford: the game's 12 threads plus 4 spare workers (each one is
+    # ~33 MB in Safari), and the memory it reaches in a race (2.5 GB) from the start, as growing a
+    # shared memory in Safari costs real memory where a larger start does not (measured with
+    # footprint on the Mac: 24 to 12 workers saved 350 MB, a 2.75 GB start 1.3 GB).
     target_link_options(recomp_app PRIVATE
-      -pthread -sPTHREAD_POOL_SIZE=24 -sWASMFS
-      -sINITIAL_MEMORY=1073741824 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4294967296
+      -pthread -sPTHREAD_POOL_SIZE=16 -sWASMFS
+      -sINITIAL_MEMORY=2952790016 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4294967296
       -sSTACK_SIZE=8388608 -sDEFAULT_PTHREAD_STACK_SIZE=16777216
       -sENVIRONMENT=web,worker -sEXIT_RUNTIME=0 -sINVOKE_RUN=0
       -sEXPORTED_RUNTIME_METHODS=ENV,callMain,FS,HEAPU8
       -sEXPORTED_FUNCTIONS=_main,_free
       --js-library ${POP_ROOT}/web/wasmfs_fetch.js
       --preload-file ${web_resources}@/app/resources)
+    # Relink when the JS library changes; CMake does not see --js-library inputs itself.
+    set_property(TARGET recomp_app APPEND PROPERTY LINK_DEPENDS ${POP_ROOT}/web/wasmfs_fetch.js)
   elseif(APPLE)
     pop_mac_bundle(recomp_app)
   else()
